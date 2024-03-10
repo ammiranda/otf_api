@@ -1,57 +1,17 @@
 package otf_api
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
-type Client struct {
-	BaseIOURL  string
-	BaseCOURL  string
-	AuthURL    string
-	Token      string
-	HTTPClient *http.Client
-}
-
-type Credentials struct {
-	Username string `json:"USERNAME"`
-	Password string `json:"PASSWORD"`
-}
-
-type AuthenticateRequest struct {
-	AuthParameters Credentials `json:"AuthParameters"`
-	AuthFlow       string      `json:"AuthFlow"`
-	ClientID       string      `json:"ClientId"`
-}
-
-type IDToken struct {
-	IDToken string `json:"IdToken"`
-}
-
-type AuthenticateResponse struct {
-	AuthenticationResult IDToken `json:"AuthenticationResult"`
-}
-
-type ListStudiosResponse struct {
-}
-
-type StudioLocation struct {
-	PhysicalAddressOne string  `json:"physicalAddress"`
-	PhysicalAddressTwo string  `json:"physicalAddress2"`
-	PhysicalCity       string  `json:"physicalCity"`
-	PhysicalState      string  `json:"physicalState"`
-	PhysicalCountry    string  `json:"physicalCountry"`
-	Latitude           float64 `json:"latitude"`
-	Longitude          float64 `json:"longitude"`
-	PhoneNumber        string  `json:"phoneNumber"`
-}
-
-type Studio struct {
-	StudioUUID     string         `json:"studioUUId"`
-	StudioName     string         `json:"studioName"`
-	StudioLocation StudioLocation `json:"studioLocation"`
-	Distance       float64        `json:"distance"`
-}
+const (
+	StudioIDsQueryParamKey = "studio_ids"
+)
 
 type StudioClassStudioAddress struct {
 	Line1      string `json:"line1"`
@@ -85,4 +45,44 @@ type StudioClass struct {
 
 type StudioScheduleResponse struct {
 	Items []StudioClass `json:"items"`
+}
+
+// GetStudiosSchedule
+func (c *Client) GetStudiosSchedule(
+	ctx context.Context,
+	studioIDs []string,
+) (StudioScheduleResponse, error) {
+	params := url.Values{
+		StudioIDsQueryParamKey: studioIDs,
+	}
+
+	url := c.BaseIOURL + "classes?" + params.Encode()
+	fmt.Println(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return StudioScheduleResponse{}, err
+	}
+
+	req.Header = http.Header{
+		"Content-Type": {
+			"application/json",
+		},
+		"Authorization": {
+			c.Token,
+		},
+	}
+
+	res, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return StudioScheduleResponse{}, err
+	}
+	defer res.Body.Close()
+
+	parsedResp := StudioScheduleResponse{}
+	err = json.NewDecoder(res.Body).Decode(&parsedResp)
+	if err != nil {
+		return StudioScheduleResponse{}, fmt.Errorf("error parsing response: %w", err)
+	}
+
+	return parsedResp, nil
 }
