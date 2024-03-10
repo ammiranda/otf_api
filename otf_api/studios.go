@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 const (
@@ -33,9 +34,9 @@ type Studio struct {
 }
 
 type ListStudiosRequest struct {
-	Latitude  float64 `validate:""`
-	Longitude float64 `validate:""`
-	Distance  float64 `validate:""`
+	Latitude  float64 `validate:"required"`
+	Longitude float64 `validate:"required"`
+	Distance  float64 `validate:"required,gt=0"`
 }
 
 // type ListStudiosResponse struct {
@@ -53,21 +54,18 @@ func (c *Client) ListStudios(
 ) error {
 	params := url.Values{
 		LatitudeQueryParamKey: {
-			"30.259373217464326",
+			toString(lat),
 		},
 		LongitudeQueryParamKey: {
-			"-97.70429793893",
+			toString(long),
 		},
 		DistanceQueryParamKey: {
-			"50.0",
+			toString(distance),
 		},
 	}
-	// params.Add("latitude", "30.259373217464326")
-	// params.Add("longitude", "-97.70429793893")
-	// params.Add("distance", "30.0")
 
-	url := c.BaseCOURL + "studios?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	u := c.BaseCOURL + "studios?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
@@ -93,4 +91,8 @@ func (c *Client) ListStudios(
 	fmt.Println(string(body))
 
 	return nil
+}
+
+func toString(v float64) string {
+	return strconv.FormatFloat(v, 'f', 15, 64)
 }
