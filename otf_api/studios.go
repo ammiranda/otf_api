@@ -2,8 +2,7 @@ package otf_api
 
 import (
 	"context"
-	"fmt"
-	"io"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -39,10 +38,21 @@ type ListStudiosRequest struct {
 	Distance  float64 `validate:"required,gt=0"`
 }
 
-// type ListStudiosResponse struct {
-// 	Data
-// 	Studios []Studio `json:""`
-// }
+type Studios struct {
+	Data       []Studio   `json:"studios"`
+	Pagination Pagination `json:"pagination"`
+}
+
+type Pagination struct {
+	PageIndex  int `json:"pageIndex"`
+	PageSize   int `json:"pageSize"`
+	TotalCount int `json:"totalCount"`
+	TotalPages int `json:"totalPages"`
+}
+
+type ListStudiosResponse struct {
+	Data Studios `json:"data"`
+}
 
 // ListStudios returns studios that lie within the radius distance (in miles)
 // from the lat/long point specified.
@@ -51,7 +61,7 @@ func (c *Client) ListStudios(
 	lat float64,
 	long float64,
 	distance float64,
-) error {
+) (ListStudiosResponse, error) {
 	params := url.Values{
 		LatitudeQueryParamKey: {
 			toString(lat),
@@ -67,7 +77,7 @@ func (c *Client) ListStudios(
 	u := c.BaseCOURL + "studios?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return ListStudiosResponse{}, err
 	}
 
 	req.Header = http.Header{
@@ -81,16 +91,16 @@ func (c *Client) ListStudios(
 
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return ListStudiosResponse{}, err
 	}
 
-	body, err := io.ReadAll(res.Body)
+	parsedResp := ListStudiosResponse{}
+	err = json.NewDecoder(res.Body).Decode(&parsedResp)
 	if err != nil {
-		return err
+		return ListStudiosResponse{}, err
 	}
-	fmt.Println(string(body))
 
-	return nil
+	return parsedResp, nil
 }
 
 func toString(v float64) string {
