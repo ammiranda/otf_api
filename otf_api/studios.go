@@ -93,6 +93,7 @@ func (c *Client) ListStudios(
 	if err != nil {
 		return ListStudiosResponse{}, err
 	}
+	defer res.Body.Close()
 
 	parsedResp := ListStudiosResponse{}
 	err = json.NewDecoder(res.Body).Decode(&parsedResp)
