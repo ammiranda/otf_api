@@ -16,6 +16,7 @@ type Client struct {
 	AuthURL    string
 	Token      string
 	HTTPClient *http.Client
+	MemberID   string
 }
 
 func getEnvVar(key string) string {
@@ -27,7 +28,8 @@ func getEnvVar(key string) string {
 	return os.Getenv(key)
 }
 
-// NewClient
+// NewClient constructor that creates and returns a new instance
+// of the OTF API client.
 func NewClient() (*Client, error) {
 	baseIOURL := getEnvVar("OTF_API_IO_BASE_URL")
 	baseCOURL := getEnvVar("OTF_API_CO_BASE_URL")

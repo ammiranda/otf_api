@@ -80,15 +80,6 @@ func (c *Client) ListStudios(
 		return ListStudiosResponse{}, err
 	}
 
-	req.Header = http.Header{
-		"Content-Type": {
-			"application/json",
-		},
-		"Authorization": {
-			c.Token,
-		},
-	}
-
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return ListStudiosResponse{}, err

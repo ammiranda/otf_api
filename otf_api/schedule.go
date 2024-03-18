@@ -47,8 +47,25 @@ type StudioScheduleResponse struct {
 	Items []StudioClass `json:"items"`
 }
 
-// GetStudiosSchedule
-func (c *Client) GetStudiosSchedule(
+type FilterValues struct {
+	Value       string `json:"value"`
+	DisplayName string `json:"display_name"`
+	IconURL     string `json:"icon_url"`
+}
+
+type FilterItem struct {
+	Name           string         `json:"name"`
+	DisplayName    string         `json:"display_name"`
+	ClassFieldName string         `json:"class_field_type"`
+	Values         []FilterValues `json:"values"`
+}
+
+type ClassTypeFiltersResponse struct {
+	Items []FilterItem
+}
+
+// GetStudiosSchedules
+func (c *Client) GetStudiosSchedules(
 	ctx context.Context,
 	studioIDs []string,
 ) (StudioScheduleResponse, error) {
@@ -57,19 +74,9 @@ func (c *Client) GetStudiosSchedule(
 	}
 
 	url := c.BaseIOURL + "classes?" + params.Encode()
-	fmt.Println(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return StudioScheduleResponse{}, err
-	}
-
-	req.Header = http.Header{
-		"Content-Type": {
-			"application/json",
-		},
-		"Authorization": {
-			c.Token,
-		},
 	}
 
 	res, err := c.HTTPClient.Do(req)
@@ -82,6 +89,31 @@ func (c *Client) GetStudiosSchedule(
 	err = json.NewDecoder(res.Body).Decode(&parsedResp)
 	if err != nil {
 		return StudioScheduleResponse{}, fmt.Errorf("error parsing response: %w", err)
+	}
+
+	return parsedResp, nil
+}
+
+func (c *Client) GetClassTypeFilter(
+	ctx context.Context,
+) (ClassTypeFiltersResponse, error) {
+	url := c.BaseIOURL + "classes/filters"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ClassTypeFiltersResponse{}, err
+	}
+
+	res, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return ClassTypeFiltersResponse{}, err
+	}
+	defer res.Body.Close()
+
+	parsedResp := ClassTypeFiltersResponse{}
+	err = json.NewDecoder(res.Body).Decode(&parsedResp)
+	if err != nil {
+		return ClassTypeFiltersResponse{}, err
 	}
 
 	return parsedResp, nil

@@ -80,7 +80,12 @@ func (c *Client) Authenticate(
 			return fmt.Errorf("error parsing response: %w", err)
 		}
 
-		c.Token = parsedResp.AuthenticationResult.IDToken
+		token := parsedResp.AuthenticationResult.IDToken
+		c.HTTPClient.Transport = Chain(
+			nil,
+			AddHeader("Authorization", token),
+			AddHeader("Content-Type", "application/json"),
+		)
 	}
 
 	return nil
