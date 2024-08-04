@@ -83,8 +83,8 @@ func (c *Client) Authenticate(
 		token := parsedResp.AuthenticationResult.IDToken
 		c.HTTPClient.Transport = Chain(
 			nil,
-			AddHeader("Authorization", token),
-			AddHeader("Content-Type", "application/json"),
+			AddHeader(http.CanonicalHeaderKey("authorization"), token),
+			AddHeader(http.CanonicalHeaderKey("content-type"), "application/json"),
 		)
 	}
 

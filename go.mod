@@ -1,5 +1,5 @@
 module otf_api
 
-go 1.21.7
+go 1.22
 
-require github.com/joho/godotenv v1.5.1 // indirect
+require github.com/joho/godotenv v1.5.1
