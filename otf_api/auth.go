@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -34,7 +35,7 @@ func (c *Client) Authenticate(
 	ctx context.Context,
 	username string,
 	password string,
-) error {
+) (err error) {
 	if c.NeedAuth() {
 		reqBody := AuthenticateRequest{
 			AuthParameters: Credentials{
@@ -45,18 +46,20 @@ func (c *Client) Authenticate(
 			ClientID: getEnvVar("OTF_CLIENT_ID"),
 		}
 
-		jsonBody, err := json.Marshal(reqBody)
-		if err != nil {
-			return fmt.Errorf("failed marshaling request body: %w", err)
+		jsonBody, marshalErr := json.Marshal(reqBody)
+		if marshalErr != nil {
+			err = fmt.Errorf("failed marshaling request body: %w", marshalErr)
+			return
 		}
 
-		req, err := http.NewRequestWithContext(
+		req, reqErr := http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
 			c.AuthURL,
 			bytes.NewBuffer(jsonBody))
-		if err != nil {
-			return fmt.Errorf("error preparing request: %w", err)
+		if reqErr != nil {
+			err = fmt.Errorf("error preparing request: %w", reqErr)
+			return
 		}
 
 		req.Header = http.Header{
@@ -68,16 +71,26 @@ func (c *Client) Authenticate(
 			},
 		}
 
-		res, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("error authenticating: %w", err)
+		res, httpErr := c.HTTPClient.Do(req)
+		if httpErr != nil {
+			err = fmt.Errorf("error authenticating: %w", httpErr)
+			return
 		}
-		defer res.Body.Close()
+		defer func() {
+			if closeErr := res.Body.Close(); closeErr != nil {
+				if err == nil {
+					err = fmt.Errorf("error closing response body: %w", closeErr)
+				} else {
+					log.Printf("Failed to close response body for Authenticate (original error: %v): %v", err, closeErr)
+				}
+			}
+		}()
 
 		parsedResp := AuthenticateResponse{}
-		err = json.NewDecoder(res.Body).Decode(&parsedResp)
-		if err != nil {
-			return fmt.Errorf("error parsing response: %w", err)
+		decodeErr := json.NewDecoder(res.Body).Decode(&parsedResp)
+		if decodeErr != nil {
+			err = fmt.Errorf("error parsing response: %w", decodeErr)
+			return
 		}
 
 		token := parsedResp.AuthenticationResult.IDToken
@@ -88,7 +101,7 @@ func (c *Client) Authenticate(
 		)
 	}
 
-	return nil
+	return
 }
 
 // NeedAuth

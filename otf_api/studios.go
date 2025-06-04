@@ -3,6 +3,7 @@ package otf_api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,7 +85,12 @@ func (c *Client) ListStudios(
 	if err != nil {
 		return ListStudiosResponse{}, err
 	}
-	defer res.Body.Close()
+	defer func() {
+		err := res.Body.Close()
+		if err != nil {
+			log.Printf("error closing response body: %v", err)
+		}
+	}()
 
 	parsedResp := ListStudiosResponse{}
 	err = json.NewDecoder(res.Body).Decode(&parsedResp)

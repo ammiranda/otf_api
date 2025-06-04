@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -83,7 +84,13 @@ func (c *Client) GetStudiosSchedules(
 	if err != nil {
 		return StudioScheduleResponse{}, err
 	}
-	defer res.Body.Close()
+
+	defer func() {
+		err := res.Body.Close()
+		if err != nil {
+			log.Printf("error closing response body: %v", err)
+		}
+	}()
 
 	parsedResp := StudioScheduleResponse{}
 	err = json.NewDecoder(res.Body).Decode(&parsedResp)
@@ -96,25 +103,35 @@ func (c *Client) GetStudiosSchedules(
 
 func (c *Client) GetClassTypeFilter(
 	ctx context.Context,
-) (ClassTypeFiltersResponse, error) {
-	url := c.BaseIOURL + "classes/filters"
+) (resp ClassTypeFiltersResponse, err error) {
+	urlPath := c.BaseIOURL + "classes/filters"
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlPath, nil)
 	if err != nil {
-		return ClassTypeFiltersResponse{}, err
+		err = fmt.Errorf("preparing request for GetClassTypeFilter: %w", err)
+		return
 	}
 
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return ClassTypeFiltersResponse{}, err
+		err = fmt.Errorf("executing request for GetClassTypeFilter: %w", err)
+		return
 	}
-	defer res.Body.Close()
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			if err == nil {
+				err = fmt.Errorf("error closing response body for GetClassTypeFilter: %w", closeErr)
+			} else {
+				log.Printf("Failed to close response body for GetClassTypeFilter (original error: %v): %v", err, closeErr)
+			}
+		}
+	}()
 
 	parsedResp := ClassTypeFiltersResponse{}
-	err = json.NewDecoder(res.Body).Decode(&parsedResp)
-	if err != nil {
-		return ClassTypeFiltersResponse{}, err
+	if decodeErr := json.NewDecoder(res.Body).Decode(&parsedResp); decodeErr != nil {
+		err = fmt.Errorf("error parsing response for GetClassTypeFilter: %w", decodeErr)
+		return
 	}
-
-	return parsedResp, nil
+	resp = parsedResp
+	return
 }
