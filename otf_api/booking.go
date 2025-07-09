@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 )
@@ -39,6 +40,10 @@ func (c *Client) BookClass(
 		return fmt.Errorf("error preparing request: %w", err)
 	}
 
+	// Set required headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
+
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error executing request: %w", err)
@@ -54,7 +59,11 @@ func (c *Client) BookClass(
 	}()
 
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("booking request failed with status code: %d", res.StatusCode)
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			return fmt.Errorf("booking request failed with status code: %d, and failed to read response body: %w", res.StatusCode, err)
+		}
+		return fmt.Errorf("booking request failed with status code: %d, response body: %s", res.StatusCode, string(body))
 	}
 
 	return nil
