@@ -86,8 +86,6 @@ func (c *Client) BookClass(
 		return fmt.Errorf("failed marshaling request body: %w", err)
 	}
 
-	// Debug: log the request body
-	log.Printf("Booking request body: %s", string(jsonBody))
 
 	apiURL, err := url.JoinPath(c.BaseIOURL, "bookings/me")
 	if err != nil {
@@ -247,8 +245,6 @@ func (c *Client) GetBookings(
 		return nil, fmt.Errorf("error reading response body: %w", err)
 	}
 
-	// Debug: log the response body
-	log.Printf("GetBookings response: %s", string(body))
 
 	var response BookingResponse
 	if err := json.Unmarshal(body, &response); err != nil {

@@ -328,8 +328,6 @@ var listBookingsCmd = &cobra.Command{
 			log.Fatalf("Error fetching bookings: %v", err)
 		}
 
-		log.Printf("Date range: %s to %s", startsAfter.Format("2006-01-02"), endsBefore.Format("2006-01-02"))
-		log.Printf("Found %d bookings", len(bookings))
 
 		if len(bookings) == 0 {
 			fmt.Println("No bookings found.")
@@ -391,6 +389,9 @@ var listBookingsCmd = &cobra.Command{
 		// If user chose to just view, show all bookings and exit
 		if selectedBookingDisplay == "Just view bookings (no action)" {
 			fmt.Printf("\nYour Bookings (%d total):\n\n", len(bookings))
+			
+			// Group bookings by day similar to schedules
+			lastDay := ""
 			for i, booking := range bookings {
 				status := "Booked"
 				if booking.Canceled {
@@ -406,7 +407,25 @@ var listBookingsCmd = &cobra.Command{
 					classTime = time.Now() // fallback
 				}
 
-				fmt.Printf("%d. %s\n", i+1, ansi.Color(booking.Class.Name, "cyan"))
+				// Get the day string (e.g., 'Mon Jan 2')
+				bookingDay := classTime.Format("Mon Jan 2")
+				if config.Timezone != "" {
+					if loc, err := time.LoadLocation(config.Timezone); err == nil {
+						bookingDay = classTime.In(loc).Format("Mon Jan 2")
+					}
+				}
+
+				// Insert day header if this is a new day
+				if bookingDay != lastDay {
+					if i > 0 { // Add spacing between days (except before first day)
+						fmt.Println()
+					}
+					header := fmt.Sprintf("=== %s ===", bookingDay)
+					fmt.Println(header)
+					lastDay = bookingDay
+				}
+
+				fmt.Printf("%s\n", ansi.Color(booking.Class.Name, "cyan"))
 				fmt.Printf("   Studio: %s\n", booking.Class.Studio.Name)
 				fmt.Printf("   Time: %s\n", formatTime(classTime, config))
 				fmt.Printf("   Status: %s\n", status)
