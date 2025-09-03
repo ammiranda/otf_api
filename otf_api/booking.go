@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// BookingRequest represents the full booking object returned from the API
 type BookingRequest struct {
 	ID                string `json:"id"`
 	PayingStudioID    string `json:"paying_studio_id"`
@@ -32,6 +33,13 @@ type BookingRequest struct {
 	UpdatedAt         string `json:"updated_at"`
 	Ratable           bool   `json:"ratable"`
 	Class             Class  `json:"class"`
+}
+
+// CreateBookingRequest represents the minimal data needed to book a class
+type CreateBookingRequest struct {
+	ClassID   string `json:"class_id"`
+	Confirmed bool   `json:"confirmed"`
+	Waitlist  bool   `json:"waitlist"`
 }
 
 type Class struct {
@@ -79,7 +87,7 @@ type BookingResponse struct {
 // Returns an error if the booking fails.
 func (c *Client) BookClass(
 	ctx context.Context,
-	bookingReq interface{},
+	bookingReq CreateBookingRequest,
 ) error {
 	jsonBody, err := json.Marshal(bookingReq)
 	if err != nil {

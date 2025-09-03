@@ -758,10 +758,10 @@ var schedulesCmd = &cobra.Command{
 			}
 
 			// Use the actual format from Charles Proxy capture
-			bookingReq := map[string]interface{}{
-				"class_id":  selectedClass.ID,
-				"confirmed": false,
-				"waitlist":  needsWaitlist,
+			bookingReq := otf_api.CreateBookingRequest{
+				ClassID:   selectedClass.ID,
+				Confirmed: false,
+				Waitlist:  needsWaitlist,
 			}
 
 			// Attempt to book the class
