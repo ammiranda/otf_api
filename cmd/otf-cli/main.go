@@ -291,6 +291,217 @@ var configureTimezoneCmd = &cobra.Command{
 	},
 }
 
+var bookingsCmd = &cobra.Command{
+	Use:   "bookings",
+	Short: "Manage your OTF bookings",
+	Long:  `Commands to list and cancel your OrangeTheory Fitness bookings.`,
+}
+
+var listBookingsCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List your current bookings",
+	Long:  `Lists all your current and upcoming OrangeTheory Fitness bookings.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		username := getEnvVar("OTF_USERNAME")
+		password := getEnvVar("OTF_PASSWORD")
+
+		if username == "" || password == "" {
+			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
+		}
+
+		apiClient, err := otf_api.NewClient()
+		if err != nil {
+			log.Fatalf("Error creating API client: %v", err)
+		}
+
+		ctx := context.Background()
+		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
+			log.Fatalf("Error authenticating: %v", authErr)
+		}
+
+		// Get bookings from today onwards
+		startsAfter := time.Now().Truncate(24 * time.Hour) // Start of today
+		endsBefore := time.Now().AddDate(0, 0, 60)        // 60 days in the future
+
+		bookings, err := apiClient.GetBookings(ctx, startsAfter, endsBefore, true)
+		if err != nil {
+			log.Fatalf("Error fetching bookings: %v", err)
+		}
+
+		log.Printf("Date range: %s to %s", startsAfter.Format("2006-01-02"), endsBefore.Format("2006-01-02"))
+		log.Printf("Found %d bookings", len(bookings))
+
+		if len(bookings) == 0 {
+			fmt.Println("No bookings found.")
+			return
+		}
+
+		config, err := loadConfig()
+		if err != nil {
+			log.Printf("Warning: Could not load configuration: %v", err)
+			config = CLIConfig{}
+		}
+
+		// Filter out canceled bookings for selection
+		activeBookings := []otf_api.BookingRequest{}
+		for _, booking := range bookings {
+			if !booking.Canceled {
+				activeBookings = append(activeBookings, booking)
+			}
+		}
+
+		if len(activeBookings) == 0 {
+			fmt.Println("No active bookings found.")
+			return
+		}
+
+		// Prepare booking options for selection
+		bookingOptions := []string{}
+		bookingMap := make(map[string]otf_api.BookingRequest)
+
+		for _, booking := range activeBookings {
+			classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
+			if err != nil {
+				classTime = time.Now() // fallback
+			}
+
+			displayStr := fmt.Sprintf("%s at %s - %s",
+				booking.Class.Name,
+				booking.Class.Studio.Name,
+				formatTime(classTime, config))
+
+			bookingOptions = append(bookingOptions, displayStr)
+			bookingMap[displayStr] = booking
+		}
+
+		// Add option to just view without canceling
+		bookingOptions = append(bookingOptions, "Just view bookings (no action)")
+
+		// Prompt for booking selection
+		var selectedBookingDisplay string
+		prompt := &survey.Select{
+			Message:  "Select a booking to cancel (or just view):",
+			Options:  bookingOptions,
+			PageSize: 15,
+		}
+		if err := survey.AskOne(prompt, &selectedBookingDisplay); err != nil {
+			log.Fatalf("Error during booking selection: %v", err)
+		}
+
+		// If user chose to just view, show all bookings and exit
+		if selectedBookingDisplay == "Just view bookings (no action)" {
+			fmt.Printf("\nYour Bookings (%d total):\n\n", len(bookings))
+			for i, booking := range bookings {
+				status := "Booked"
+				if booking.Canceled {
+					status = ansi.Color("Canceled", "red")
+				} else if booking.LateCanceled {
+					status = ansi.Color("Late Canceled", "yellow")
+				} else {
+					status = ansi.Color("Booked", "green")
+				}
+
+				classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
+				if err != nil {
+					classTime = time.Now() // fallback
+				}
+
+				fmt.Printf("%d. %s\n", i+1, ansi.Color(booking.Class.Name, "cyan"))
+				fmt.Printf("   Studio: %s\n", booking.Class.Studio.Name)
+				fmt.Printf("   Time: %s\n", formatTime(classTime, config))
+				fmt.Printf("   Status: %s\n", status)
+				fmt.Printf("   Booking ID: %s\n", booking.ID)
+				fmt.Println()
+			}
+			return
+		}
+
+		// Get the selected booking
+		selectedBooking, ok := bookingMap[selectedBookingDisplay]
+		if !ok {
+			log.Fatal("Error: Selected booking not found")
+		}
+
+		// Confirm cancellation
+		classTime, _ := time.Parse(time.RFC3339, selectedBooking.Class.StartsAt)
+		fmt.Printf("\nSelected Booking:\n")
+		fmt.Printf("Class: %s\n", selectedBooking.Class.Name)
+		fmt.Printf("Studio: %s\n", selectedBooking.Class.Studio.Name)
+		fmt.Printf("Time: %s\n", formatTime(classTime, config))
+		fmt.Printf("Booking ID: %s\n", selectedBooking.ID)
+
+		var shouldCancel bool
+		cancelPrompt := &survey.Confirm{
+			Message: "Are you sure you want to cancel this booking?",
+		}
+		if err := survey.AskOne(cancelPrompt, &shouldCancel); err != nil {
+			log.Fatalf("Error during cancellation confirmation: %v", err)
+		}
+
+		if !shouldCancel {
+			fmt.Println("Cancellation aborted.")
+			return
+		}
+
+		// Cancel the booking
+		err = apiClient.CancelBooking(ctx, selectedBooking.ID)
+		if err != nil {
+			log.Fatalf("Error canceling booking: %v", err)
+		}
+
+		fmt.Printf("Successfully canceled booking for %s at %s\n", 
+			selectedBooking.Class.Name, 
+			selectedBooking.Class.Studio.Name)
+	},
+}
+
+var cancelBookingCmd = &cobra.Command{
+	Use:   "cancel [booking-id]",
+	Short: "Cancel a booking",
+	Long:  `Cancel a booking by providing the booking ID. Use 'otf-cli bookings list' to see your booking IDs.`,
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		bookingID := args[0]
+		username := getEnvVar("OTF_USERNAME")
+		password := getEnvVar("OTF_PASSWORD")
+
+		if username == "" || password == "" {
+			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
+		}
+
+		apiClient, err := otf_api.NewClient()
+		if err != nil {
+			log.Fatalf("Error creating API client: %v", err)
+		}
+
+		ctx := context.Background()
+		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
+			log.Fatalf("Error authenticating: %v", authErr)
+		}
+
+		// Confirm cancellation
+		var shouldCancel bool
+		prompt := &survey.Confirm{
+			Message: fmt.Sprintf("Are you sure you want to cancel booking %s?", bookingID),
+		}
+		if err := survey.AskOne(prompt, &shouldCancel); err != nil {
+			log.Fatalf("Error during cancellation confirmation: %v", err)
+		}
+
+		if !shouldCancel {
+			fmt.Println("Cancellation aborted.")
+			return
+		}
+
+		err = apiClient.CancelBooking(ctx, bookingID)
+		if err != nil {
+			log.Fatalf("Error canceling booking: %v", err)
+		}
+
+		fmt.Printf("Successfully canceled booking %s\n", bookingID)
+	},
+}
+
 var schedulesCmd = &cobra.Command{
 	Use:   "schedules",
 	Short: "Fetch studio schedules",
@@ -527,8 +738,15 @@ var schedulesCmd = &cobra.Command{
 				}
 			}
 
+			// Use the actual format from Charles Proxy capture
+			bookingReq := map[string]interface{}{
+				"class_id":  selectedClass.ID,
+				"confirmed": false,
+				"waitlist":  needsWaitlist,
+			}
+
 			// Attempt to book the class
-			err := apiClient.BookClass(ctx, selectedClass.ID, needsWaitlist)
+			err := apiClient.BookClass(ctx, bookingReq)
 			if err != nil {
 				log.Fatalf("Error booking class: %v", err)
 			}
@@ -634,6 +852,11 @@ func formatTime(t time.Time, config CLIConfig) string {
 func init() {
 	rootCmd.AddCommand(schedulesCmd)
 	schedulesCmd.Flags().StringVar(&studioIDs, "studio-ids", "", "Comma-separated list of studio IDs (optional if preferred studios are configured)")
+
+	// Add bookings commands
+	rootCmd.AddCommand(bookingsCmd)
+	bookingsCmd.AddCommand(listBookingsCmd)
+	bookingsCmd.AddCommand(cancelBookingCmd)
 
 	// Add configure commands
 	rootCmd.AddCommand(configureCmd)
