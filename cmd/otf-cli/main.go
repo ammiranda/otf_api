@@ -363,7 +363,17 @@ var listBookingsCmd = &cobra.Command{
 				classTime = time.Now() // fallback
 			}
 
-			displayStr := fmt.Sprintf("%s at %s - %s",
+			// Get the day string for display
+			displayTime := classTime
+			if config.Timezone != "" {
+				if loc, err := time.LoadLocation(config.Timezone); err == nil {
+					displayTime = classTime.In(loc)
+				}
+			}
+			dayStr := displayTime.Format("Mon Jan 2")
+
+			displayStr := fmt.Sprintf("%s - %s at %s - %s",
+				dayStr,
 				booking.Class.Name,
 				booking.Class.Studio.Name,
 				formatTime(classTime, config))
