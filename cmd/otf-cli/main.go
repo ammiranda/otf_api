@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ type IPLocation struct {
 type CLIConfig struct {
 	PreferredStudioIDs []string `json:"preferred_studio_ids,omitempty"`
 	Timezone           string   `json:"timezone,omitempty"`
+	Token              string   `json:"token,omitempty"`
 }
 
 var rootCmd = &cobra.Command{
@@ -60,145 +62,37 @@ var configureStudiosCmd = &cobra.Command{
 	Long: `Allows you to search for OTF studios by location and save your preferred ones. 
 These saved studios will be used by the 'schedules' command if no --studio-ids are specified.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
-
-		if username == "" || password == "" {
-			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
-		}
-
-		apiClient, err := otf_api.NewClient()
+		apiClient, err := authenticateClient()
 		if err != nil {
-			log.Fatalf("Error creating API client: %v", err)
+			log.Fatal(err)
 		}
+
+		location, err := getLocation()
+		if err != nil {
+			log.Fatalf("Error getting location: %v", err)
+		}
+
+		distance, err := promptForDistance()
+		if err != nil {
+			log.Fatalf("Error getting distance: %v", err)
+		}
+
+		log.Printf("Using location %s: %.6f, %.6f", location.Source, location.Lat, location.Long)
+		log.Println("Fetching studios near you...")
 
 		ctx := context.Background()
-		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
-			log.Fatalf("Error authenticating: %v", authErr)
-		}
-
-		// Get location information
-		var lat, long float64
-		var locationSource string
-
-		// Try to get location from ip-api.com
-		resp, err := http.Get("http://ip-api.com/json/")
-		if err == nil {
-			defer func() {
-				if err := resp.Body.Close(); err != nil {
-					log.Printf("error closing response body: %v", err)
-				}
-			}()
-			var location IPLocation
-			if err := json.NewDecoder(resp.Body).Decode(&location); err == nil {
-				lat = location.Lat
-				long = location.Lon
-				locationSource = fmt.Sprintf("detected from your IP in %s, %s, %s",
-					location.City,
-					location.Region,
-					location.Country)
-			}
-		}
-		if err != nil || locationSource == "" {
-			log.Printf("Warning: Could not detect location from IP: %v", err)
-		}
-
-		// If location detection failed, prompt for manual input
-		if lat == 0 && long == 0 {
-			locationQs := []*survey.Question{
-				{Name: "latitude", Prompt: &survey.Input{Message: "Enter your latitude (e.g., 40.7128):"}, Validate: survey.Required},
-				{Name: "longitude", Prompt: &survey.Input{Message: "Enter your longitude (e.g., -74.0060):"}, Validate: survey.Required},
-			}
-			locationAnswers := struct {
-				Latitude  string `survey:"latitude"`
-				Longitude string `survey:"longitude"`
-			}{}
-
-			if err := survey.Ask(locationQs, &locationAnswers); err != nil {
-				log.Fatalf("Error getting location input: %v", err)
-			}
-
-			var errLat, errLong error
-			lat, errLat = strconv.ParseFloat(locationAnswers.Latitude, 64)
-			long, errLong = strconv.ParseFloat(locationAnswers.Longitude, 64)
-
-			if errLat != nil || errLong != nil {
-				log.Fatalf("Invalid numeric input for latitude or longitude. Please ensure they are valid numbers.")
-			}
-			locationSource = "manually entered"
-		}
-
-		// Prompt for distance
-		distanceQs := []*survey.Question{
-			{Name: "distance", Prompt: &survey.Input{Message: "Enter search distance in miles (e.g., 10):"}, Validate: survey.Required},
-		}
-		distanceAnswers := struct {
-			Distance string `survey:"distance"`
-		}{}
-
-		if err := survey.Ask(distanceQs, &distanceAnswers); err != nil {
-			log.Fatalf("Error getting distance input: %v", err)
-		}
-
-		dist, errDist := strconv.ParseFloat(distanceAnswers.Distance, 64)
-		if errDist != nil {
-			log.Fatalf("Invalid numeric input for distance. Please ensure it is a valid number.")
-		}
-
-		log.Printf("Using location %s: %.6f, %.6f", locationSource, lat, long)
-		log.Println("Fetching studios near you...")
-		studioListResponse, err := apiClient.ListStudios(ctx, lat, long, dist)
+		studioListResponse, err := apiClient.ListStudios(ctx, location.Lat, location.Long, distance)
 		if err != nil {
 			log.Fatalf("Error fetching studios: %v", err)
 		}
 
-		if len(studioListResponse.Data.Data) == 0 {
-			log.Println("No studios found for the given location and distance. Try increasing the distance or checking your coordinates.")
-			return
-		}
-
-		// Prepare for multi-select
-		studioOptions := []string{}
-		studioMap := make(map[string]string) // Maps display name to StudioUUID
-		for _, studio := range studioListResponse.Data.Data {
-			displayName := fmt.Sprintf("%s (ID: %s, %.2f miles)", studio.StudioName, studio.StudioUUID, studio.Distance)
-			studioOptions = append(studioOptions, displayName)
-			studioMap[displayName] = studio.StudioUUID
-		}
-
-		selectedDisplayNames := []string{}
-		prompt := &survey.MultiSelect{
-			Message:  "Select your preferred studios (use space to select, enter to confirm):",
-			Options:  studioOptions,
-			PageSize: 15, // Adjust as needed
-		}
-		if err := survey.AskOne(prompt, &selectedDisplayNames); err != nil {
-			log.Fatalf("Error during studio selection: %v", err)
-		}
-
-		selectedStudioIDs := []string{}
-		for _, displayName := range selectedDisplayNames {
-			if id, ok := studioMap[displayName]; ok {
-				selectedStudioIDs = append(selectedStudioIDs, id)
-			}
-		}
-
-		config, err := loadConfig()
+		selectedStudioIDs, err := selectStudios(studioListResponse.Data.Data)
 		if err != nil {
-			log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
-			// Proceed with an empty config if loading fails, as saveConfig will create it
-			config = CLIConfig{}
+			log.Fatalf("Error selecting studios: %v", err)
 		}
 
-		config.PreferredStudioIDs = selectedStudioIDs
-		if err := saveConfig(config); err != nil {
-			log.Fatalf("Error saving configuration: %v", err)
-		}
-
-		if len(selectedStudioIDs) > 0 {
-			log.Printf("Preferred studios saved: %s", strings.Join(selectedStudioIDs, ", "))
-		} else {
-			log.Println("No studios selected. Preferred studios configuration remains unchanged or empty.")
+		if err := saveStudioPreferences(selectedStudioIDs); err != nil {
+			log.Fatalf("Error saving preferences: %v", err)
 		}
 	},
 }
@@ -291,23 +185,45 @@ var configureTimezoneCmd = &cobra.Command{
 	},
 }
 
-var bookingsCmd = &cobra.Command{
-	Use:   "bookings",
-	Short: "Manage your OTF bookings",
-	Long:  `Commands to list and cancel your OrangeTheory Fitness bookings.`,
-}
-
-var listBookingsCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List your current bookings",
-	Long:  `Lists all your current and upcoming OrangeTheory Fitness bookings.`,
+var loginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Authenticate with your OTF credentials",
+	Long:  `Interactive login to authenticate with your OrangeTheory Fitness account. Prompts for username and password, then stores the token for future use.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
+		username, password := "", ""
 
-		if username == "" || password == "" {
-			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
+		prompts := []*survey.Question{
+			{
+				Name:   "username",
+				Prompt: &survey.Input{Message: "Username:"},
+				Validate: func(val interface{}) error {
+					if str, ok := val.(string); !ok || str == "" {
+						return fmt.Errorf("username is required")
+					}
+					return nil
+				},
+			},
+			{
+				Name:   "password",
+				Prompt: &survey.Password{Message: "Password:"},
+				Validate: func(val interface{}) error {
+					if str, ok := val.(string); !ok || str == "" {
+						return fmt.Errorf("password is required")
+					}
+					return nil
+				},
+			},
 		}
+
+		answers := struct {
+			Username string
+			Password string
+		}{}
+		if err := survey.Ask(prompts, &answers); err != nil {
+			log.Fatalf("Error during login prompts: %v", err)
+		}
+		username = answers.Username
+		password = answers.Password
 
 		apiClient, err := otf_api.NewClient()
 		if err != nil {
@@ -319,15 +235,43 @@ var listBookingsCmd = &cobra.Command{
 			log.Fatalf("Error authenticating: %v", authErr)
 		}
 
-		// Get bookings from today onwards
-		startsAfter := time.Now().Truncate(24 * time.Hour) // Start of today
-		endsBefore := time.Now().AddDate(0, 0, 60)        // 60 days in the future
+		config, err := loadConfig()
+		if err != nil {
+			config = CLIConfig{}
+		}
+		config.Token = apiClient.Token
+		if err := saveConfig(config); err != nil {
+			log.Fatalf("Error saving token: %v", err)
+		}
+
+		fmt.Println("Successfully authenticated! Token saved.")
+	},
+}
+
+var bookingsCmd = &cobra.Command{
+	Use:   "bookings",
+	Short: "Manage your OTF bookings",
+	Long:  `Commands to list and cancel your OrangeTheory Fitness bookings.`,
+}
+
+var listBookingsCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List your current bookings",
+	Long:  `Lists all your current and upcoming OrangeTheory Fitness bookings.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		apiClient, err := authenticateClient()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		ctx := context.Background()
+		startsAfter := time.Now().Truncate(24 * time.Hour)
+		endsBefore := time.Now().AddDate(0, 0, 60)
 
 		bookings, err := apiClient.GetBookings(ctx, startsAfter, endsBefore, true)
 		if err != nil {
 			log.Fatalf("Error fetching bookings: %v", err)
 		}
-
 
 		if len(bookings) == 0 {
 			fmt.Println("No bookings found.")
@@ -340,147 +284,25 @@ var listBookingsCmd = &cobra.Command{
 			config = CLIConfig{}
 		}
 
-		// Filter out canceled bookings for selection
-		activeBookings := []otf_api.BookingRequest{}
-		for _, booking := range bookings {
-			if !booking.Canceled {
-				activeBookings = append(activeBookings, booking)
-			}
-		}
-
+		activeBookings := filterActiveBookings(bookings)
 		if len(activeBookings) == 0 {
 			fmt.Println("No active bookings found.")
 			return
 		}
 
-		// Prepare booking options for selection
-		bookingOptions := []string{}
-		bookingMap := make(map[string]otf_api.BookingRequest)
-
-		for _, booking := range activeBookings {
-			classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
-			if err != nil {
-				classTime = time.Now() // fallback
-			}
-
-			// Get the day string for display
-			displayTime := classTime
-			if config.Timezone != "" {
-				if loc, err := time.LoadLocation(config.Timezone); err == nil {
-					displayTime = classTime.In(loc)
-				}
-			}
-			dayStr := displayTime.Format("Mon Jan 2")
-
-			displayStr := fmt.Sprintf("%s - %s at %s - %s",
-				dayStr,
-				booking.Class.Name,
-				booking.Class.Studio.Name,
-				formatTime(classTime, config))
-
-			bookingOptions = append(bookingOptions, displayStr)
-			bookingMap[displayStr] = booking
-		}
-
-		// Add option to just view without canceling
-		bookingOptions = append(bookingOptions, "Just view bookings (no action)")
-
-		// Prompt for booking selection
-		var selectedBookingDisplay string
-		prompt := &survey.Select{
-			Message:  "Select a booking to cancel (or just view):",
-			Options:  bookingOptions,
-			PageSize: 15,
-		}
-		if err := survey.AskOne(prompt, &selectedBookingDisplay); err != nil {
-			log.Fatalf("Error during booking selection: %v", err)
-		}
-
-		// If user chose to just view, show all bookings and exit
-		if selectedBookingDisplay == "Just view bookings (no action)" {
-			fmt.Printf("\nYour Bookings (%d total):\n\n", len(bookings))
-			
-			// Group bookings by day similar to schedules
-			lastDay := ""
-			for i, booking := range bookings {
-				status := "Booked"
-				if booking.Canceled {
-					status = ansi.Color("Canceled", "red")
-				} else if booking.LateCanceled {
-					status = ansi.Color("Late Canceled", "yellow")
-				} else {
-					status = ansi.Color("Booked", "green")
-				}
-
-				classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
-				if err != nil {
-					classTime = time.Now() // fallback
-				}
-
-				// Get the day string (e.g., 'Mon Jan 2')
-				bookingDay := classTime.Format("Mon Jan 2")
-				if config.Timezone != "" {
-					if loc, err := time.LoadLocation(config.Timezone); err == nil {
-						bookingDay = classTime.In(loc).Format("Mon Jan 2")
-					}
-				}
-
-				// Insert day header if this is a new day
-				if bookingDay != lastDay {
-					if i > 0 { // Add spacing between days (except before first day)
-						fmt.Println()
-					}
-					header := fmt.Sprintf("=== %s ===", bookingDay)
-					fmt.Println(header)
-					lastDay = bookingDay
-				}
-
-				fmt.Printf("%s\n", ansi.Color(booking.Class.Name, "cyan"))
-				fmt.Printf("   Studio: %s\n", booking.Class.Studio.Name)
-				fmt.Printf("   Time: %s\n", formatTime(classTime, config))
-				fmt.Printf("   Status: %s\n", status)
-				fmt.Printf("   Booking ID: %s\n", booking.ID)
-				fmt.Println()
-			}
-			return
-		}
-
-		// Get the selected booking
-		selectedBooking, ok := bookingMap[selectedBookingDisplay]
-		if !ok {
-			log.Fatal("Error: Selected booking not found")
-		}
-
-		// Confirm cancellation
-		classTime, _ := time.Parse(time.RFC3339, selectedBooking.Class.StartsAt)
-		fmt.Printf("\nSelected Booking:\n")
-		fmt.Printf("Class: %s\n", selectedBooking.Class.Name)
-		fmt.Printf("Studio: %s\n", selectedBooking.Class.Studio.Name)
-		fmt.Printf("Time: %s\n", formatTime(classTime, config))
-		fmt.Printf("Booking ID: %s\n", selectedBooking.ID)
-
-		var shouldCancel bool
-		cancelPrompt := &survey.Confirm{
-			Message: "Are you sure you want to cancel this booking?",
-		}
-		if err := survey.AskOne(cancelPrompt, &shouldCancel); err != nil {
-			log.Fatalf("Error during cancellation confirmation: %v", err)
-		}
-
-		if !shouldCancel {
-			fmt.Println("Cancellation aborted.")
-			return
-		}
-
-		// Cancel the booking
-		err = apiClient.CancelBooking(ctx, selectedBooking.ID)
+		selectedBooking, err := selectBookingToCancel(activeBookings, config)
 		if err != nil {
+			log.Fatalf("Error selecting booking: %v", err)
+		}
+
+		if selectedBooking == nil {
+			displayAllBookings(bookings, config)
+			return
+		}
+
+		if err := confirmAndCancelBooking(apiClient, selectedBooking, config); err != nil {
 			log.Fatalf("Error canceling booking: %v", err)
 		}
-
-		fmt.Printf("Successfully canceled booking for %s at %s\n", 
-			selectedBooking.Class.Name, 
-			selectedBooking.Class.Studio.Name)
 	},
 }
 
@@ -647,12 +469,35 @@ var schedulesCmd = &cobra.Command{
 			studioColWidth = 10 // fallback to avoid negative/too small
 		}
 
+		// Filter out canceled classes and sort by start time
+		activeClasses := make([]otf_api.StudioClass, 0, len(schedules.Items))
+		for _, class := range schedules.Items {
+			if !class.Canceled {
+				activeClasses = append(activeClasses, class)
+			}
+		}
+
+		// Sort classes by timezone-converted start time to ensure proper day grouping
+		sort.SliceStable(activeClasses, func(i, j int) bool {
+			var timeI, timeJ time.Time
+			if config.Timezone != "" {
+				if loc, err := time.LoadLocation(config.Timezone); err == nil {
+					timeI = activeClasses[i].StartsAt.In(loc)
+					timeJ = activeClasses[j].StartsAt.In(loc)
+				} else {
+					timeI = activeClasses[i].StartsAt
+					timeJ = activeClasses[j].StartsAt
+				}
+			} else {
+				timeI = activeClasses[i].StartsAt
+				timeJ = activeClasses[j].StartsAt
+			}
+			return timeI.Before(timeJ)
+		})
+
 		// Group classes by day
 		lastDay := ""
-		for _, class := range schedules.Items {
-			if class.Canceled {
-				continue // Skip canceled classes
-			}
+		for _, class := range activeClasses {
 
 			// Assign a color to the studio if not already assigned
 			studioID := class.Studio.ID
@@ -664,21 +509,38 @@ var schedulesCmd = &cobra.Command{
 				colorIdx++
 			}
 
-			// Format the class time using configured timezone
+			// Convert class time to the configured timezone first
+			var displayTime time.Time
+			if config.Timezone != "" {
+				if loc, err := time.LoadLocation(config.Timezone); err == nil {
+					displayTime = class.StartsAt.In(loc)
+				} else {
+					log.Printf("Warning: Invalid timezone %s, using original time: %v", config.Timezone, err)
+					displayTime = class.StartsAt
+				}
+			} else {
+				displayTime = class.StartsAt
+			}
+
+			// Format the class time using the converted time
 			startTime := formatTime(class.StartsAt, config)
 			endTime := formatTime(class.EndsAt, config)
 
-			// Get the day string (e.g., 'Mon Jan 2')
-			classDay := class.StartsAt.Format("Mon Jan 2")
-			if config.Timezone != "" {
-				if loc, err := time.LoadLocation(config.Timezone); err == nil {
-					classDay = class.StartsAt.In(loc).Format("Mon Jan 2")
-				}
+			// Get the day string using the same converted time for consistency
+			classDay := displayTime.Format("Mon Jan 2")
+
+			// Debug logging to help identify timezone issues (only if DEBUG env var is set)
+			if getEnvVar("DEBUG") != "" {
+				log.Printf("DEBUG: Class %s - Original: %s, Display: %s, Day: %s",
+					class.Name,
+					class.StartsAt.Format("2006-01-02 15:04:05 MST"),
+					displayTime.Format("2006-01-02 15:04:05 MST"),
+					classDay)
 			}
 
 			// Insert day header if this is a new day
 			if classDay != lastDay {
-				header := fmt.Sprintf("=== %s ===", classDay)
+				header := fmt.Sprintf("─── %s ───", classDay)
 				classOptions = append(classOptions, header)
 				lastDay = classDay
 			}
@@ -723,7 +585,11 @@ var schedulesCmd = &cobra.Command{
 			log.Fatalf("Error during class selection: %v", err)
 		}
 
-		// Skip header lines
+		// Skip header lines - check if user selected a day header
+		if strings.HasPrefix(selectedClassDisplay, "─── ") && strings.HasSuffix(selectedClassDisplay, " ───") {
+			log.Fatal("Error: Cannot book a day header. Please select an actual class.")
+		}
+
 		selectedClass, ok := classMap[selectedClassDisplay]
 		if !ok {
 			log.Fatal("Error: Selected class not found in class map")
@@ -860,6 +726,332 @@ func getEnvVar(key string) string {
 	return val
 }
 
+// authenticateClient creates and authenticates an API client
+func authenticateClient() (*otf_api.Client, error) {
+	apiClient, err := otf_api.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("error creating API client: %v", err)
+	}
+
+	config, err := loadConfig()
+	if err == nil && config.Token != "" {
+		apiClient.SetToken(config.Token)
+		return apiClient, nil
+	}
+
+	username := getEnvVar("OTF_USERNAME")
+	password := getEnvVar("OTF_PASSWORD")
+
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("not authenticated. Run 'otf-cli login' or set OTF_USERNAME and OTF_PASSWORD environment variables")
+	}
+
+	ctx := context.Background()
+	if err := apiClient.Authenticate(ctx, username, password); err != nil {
+		return nil, fmt.Errorf("error authenticating: %v", err)
+	}
+
+	return apiClient, nil
+}
+
+// LocationResult holds location information
+type LocationResult struct {
+	Lat    float64
+	Long   float64
+	Source string
+}
+
+// getLocationFromIP tries to detect location from IP
+func getLocationFromIP() *LocationResult {
+	resp, err := http.Get("http://ip-api.com/json/")
+	if err != nil {
+		return nil
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("error closing response body: %v", err)
+		}
+	}()
+
+	var location IPLocation
+	if err := json.NewDecoder(resp.Body).Decode(&location); err != nil {
+		return nil
+	}
+
+	return &LocationResult{
+		Lat:  location.Lat,
+		Long: location.Lon,
+		Source: fmt.Sprintf("detected from your IP in %s, %s, %s",
+			location.City, location.Region, location.Country),
+	}
+}
+
+// promptForManualLocation asks user to enter coordinates manually
+func promptForManualLocation() (*LocationResult, error) {
+	locationQs := []*survey.Question{
+		{Name: "latitude", Prompt: &survey.Input{Message: "Enter your latitude (e.g., 40.7128):"}, Validate: survey.Required},
+		{Name: "longitude", Prompt: &survey.Input{Message: "Enter your longitude (e.g., -74.0060):"}, Validate: survey.Required},
+	}
+	locationAnswers := struct {
+		Latitude  string `survey:"latitude"`
+		Longitude string `survey:"longitude"`
+	}{}
+
+	if err := survey.Ask(locationQs, &locationAnswers); err != nil {
+		return nil, fmt.Errorf("error getting location input: %v", err)
+	}
+
+	lat, errLat := strconv.ParseFloat(locationAnswers.Latitude, 64)
+	long, errLong := strconv.ParseFloat(locationAnswers.Longitude, 64)
+
+	if errLat != nil || errLong != nil {
+		return nil, fmt.Errorf("invalid numeric input for latitude or longitude")
+	}
+
+	return &LocationResult{
+		Lat:    lat,
+		Long:   long,
+		Source: "manually entered",
+	}, nil
+}
+
+// getLocation gets location either from IP detection or manual input
+func getLocation() (*LocationResult, error) {
+	// Try IP detection first
+	if result := getLocationFromIP(); result != nil {
+		return result, nil
+	}
+
+	log.Println("Warning: Could not detect location from IP")
+	return promptForManualLocation()
+}
+
+// promptForDistance asks user for search distance
+func promptForDistance() (float64, error) {
+	distanceQs := []*survey.Question{
+		{Name: "distance", Prompt: &survey.Input{Message: "Enter search distance in miles (e.g., 10):"}, Validate: survey.Required},
+	}
+	distanceAnswers := struct {
+		Distance string `survey:"distance"`
+	}{}
+
+	if err := survey.Ask(distanceQs, &distanceAnswers); err != nil {
+		return 0, fmt.Errorf("error getting distance input: %v", err)
+	}
+
+	dist, err := strconv.ParseFloat(distanceAnswers.Distance, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid numeric input for distance")
+	}
+
+	return dist, nil
+}
+
+// selectStudios handles studio selection process
+func selectStudios(studios []otf_api.Studio) ([]string, error) {
+	if len(studios) == 0 {
+		return nil, fmt.Errorf("no studios found for the given location and distance")
+	}
+
+	studioOptions := []string{}
+	studioMap := make(map[string]string)
+	for _, studio := range studios {
+		displayName := fmt.Sprintf("%s (ID: %s, %.2f miles)", studio.StudioName, studio.StudioUUID, studio.Distance)
+		studioOptions = append(studioOptions, displayName)
+		studioMap[displayName] = studio.StudioUUID
+	}
+
+	selectedDisplayNames := []string{}
+	prompt := &survey.MultiSelect{
+		Message:  "Select your preferred studios (use space to select, enter to confirm):",
+		Options:  studioOptions,
+		PageSize: 15,
+	}
+	if err := survey.AskOne(prompt, &selectedDisplayNames); err != nil {
+		return nil, fmt.Errorf("error during studio selection: %v", err)
+	}
+
+	selectedStudioIDs := []string{}
+	for _, displayName := range selectedDisplayNames {
+		if id, ok := studioMap[displayName]; ok {
+			selectedStudioIDs = append(selectedStudioIDs, id)
+		}
+	}
+
+	return selectedStudioIDs, nil
+}
+
+// saveStudioPreferences saves selected studio IDs to config
+func saveStudioPreferences(studioIDs []string) error {
+	config, err := loadConfig()
+	if err != nil {
+		log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
+		config = CLIConfig{}
+	}
+
+	config.PreferredStudioIDs = studioIDs
+	if err := saveConfig(config); err != nil {
+		return fmt.Errorf("error saving configuration: %v", err)
+	}
+
+	if len(studioIDs) > 0 {
+		log.Printf("Preferred studios saved: %s", strings.Join(studioIDs, ", "))
+	} else {
+		log.Println("No studios selected. Preferred studios configuration remains unchanged or empty.")
+	}
+
+	return nil
+}
+
+// filterActiveBookings returns only non-canceled bookings
+func filterActiveBookings(bookings []otf_api.BookingRequest) []otf_api.BookingRequest {
+	activeBookings := []otf_api.BookingRequest{}
+	for _, booking := range bookings {
+		if !booking.Canceled {
+			activeBookings = append(activeBookings, booking)
+		}
+	}
+	return activeBookings
+}
+
+// createBookingSelectionOptions creates display options for booking selection
+func createBookingSelectionOptions(bookings []otf_api.BookingRequest, config CLIConfig) ([]string, map[string]otf_api.BookingRequest) {
+	bookingOptions := []string{}
+	bookingMap := make(map[string]otf_api.BookingRequest)
+
+	for _, booking := range bookings {
+		classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
+		if err != nil {
+			classTime = time.Now()
+		}
+
+		displayTime := classTime
+		if config.Timezone != "" {
+			if loc, err := time.LoadLocation(config.Timezone); err == nil {
+				displayTime = classTime.In(loc)
+			}
+		}
+		dayStr := displayTime.Format("Mon Jan 2")
+
+		displayStr := fmt.Sprintf("%s - %s at %s - %s",
+			dayStr,
+			booking.Class.Name,
+			booking.Class.Studio.Name,
+			formatTime(classTime, config))
+
+		bookingOptions = append(bookingOptions, displayStr)
+		bookingMap[displayStr] = booking
+	}
+
+	return bookingOptions, bookingMap
+}
+
+// displayAllBookings shows all bookings grouped by day
+func displayAllBookings(bookings []otf_api.BookingRequest, config CLIConfig) {
+	fmt.Printf("\nYour Bookings (%d total):\n\n", len(bookings))
+
+	lastDay := ""
+	for i, booking := range bookings {
+		status := "Booked"
+		if booking.Canceled {
+			status = ansi.Color("Canceled", "red")
+		} else if booking.LateCanceled {
+			status = ansi.Color("Late Canceled", "yellow")
+		} else {
+			status = ansi.Color("Booked", "green")
+		}
+
+		classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
+		if err != nil {
+			classTime = time.Now()
+		}
+
+		bookingDay := classTime.Format("Mon Jan 2")
+		if config.Timezone != "" {
+			if loc, err := time.LoadLocation(config.Timezone); err == nil {
+				bookingDay = classTime.In(loc).Format("Mon Jan 2")
+			}
+		}
+
+		if bookingDay != lastDay {
+			if i > 0 {
+				fmt.Println()
+			}
+			header := fmt.Sprintf("=== %s ===", bookingDay)
+			fmt.Println(header)
+			lastDay = bookingDay
+		}
+
+		fmt.Printf("%s\n", ansi.Color(booking.Class.Name, "cyan"))
+		fmt.Printf("   Studio: %s\n", booking.Class.Studio.Name)
+		fmt.Printf("   Time: %s\n", formatTime(classTime, config))
+		fmt.Printf("   Status: %s\n", status)
+		fmt.Printf("   Booking ID: %s\n", booking.ID)
+		fmt.Println()
+	}
+}
+
+// selectBookingToCancel prompts user to select a booking for cancellation
+func selectBookingToCancel(activeBookings []otf_api.BookingRequest, config CLIConfig) (*otf_api.BookingRequest, error) {
+	bookingOptions, bookingMap := createBookingSelectionOptions(activeBookings, config)
+	bookingOptions = append(bookingOptions, "Just view bookings (no action)")
+
+	var selectedBookingDisplay string
+	prompt := &survey.Select{
+		Message:  "Select a booking to cancel (or just view):",
+		Options:  bookingOptions,
+		PageSize: 15,
+	}
+	if err := survey.AskOne(prompt, &selectedBookingDisplay); err != nil {
+		return nil, fmt.Errorf("error during booking selection: %v", err)
+	}
+
+	if selectedBookingDisplay == "Just view bookings (no action)" {
+		return nil, nil // Signal to just view bookings
+	}
+
+	selectedBooking, ok := bookingMap[selectedBookingDisplay]
+	if !ok {
+		return nil, fmt.Errorf("selected booking not found")
+	}
+
+	return &selectedBooking, nil
+}
+
+// confirmAndCancelBooking displays booking details and confirms cancellation
+func confirmAndCancelBooking(apiClient *otf_api.Client, booking *otf_api.BookingRequest, config CLIConfig) error {
+	classTime, _ := time.Parse(time.RFC3339, booking.Class.StartsAt)
+	fmt.Printf("\nSelected Booking:\n")
+	fmt.Printf("Class: %s\n", booking.Class.Name)
+	fmt.Printf("Studio: %s\n", booking.Class.Studio.Name)
+	fmt.Printf("Time: %s\n", formatTime(classTime, config))
+	fmt.Printf("Booking ID: %s\n", booking.ID)
+
+	var shouldCancel bool
+	cancelPrompt := &survey.Confirm{
+		Message: "Are you sure you want to cancel this booking?",
+	}
+	if err := survey.AskOne(cancelPrompt, &shouldCancel); err != nil {
+		return fmt.Errorf("error during cancellation confirmation: %v", err)
+	}
+
+	if !shouldCancel {
+		fmt.Println("Cancellation aborted.")
+		return nil
+	}
+
+	ctx := context.Background()
+	if err := apiClient.CancelBooking(ctx, booking.ID); err != nil {
+		return fmt.Errorf("error canceling booking: %v", err)
+	}
+
+	fmt.Printf("Successfully canceled booking for %s at %s\n",
+		booking.Class.Name,
+		booking.Class.Studio.Name)
+
+	return nil
+}
+
 // formatTime formats a time.Time value according to the configured timezone
 func formatTime(t time.Time, config CLIConfig) string {
 	if config.Timezone == "" {
@@ -891,6 +1083,9 @@ func init() {
 	rootCmd.AddCommand(configureCmd)
 	configureCmd.AddCommand(configureStudiosCmd)
 	configureCmd.AddCommand(configureTimezoneCmd)
+
+	// Add login command
+	rootCmd.AddCommand(loginCmd)
 }
 
 func main() {

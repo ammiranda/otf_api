@@ -105,7 +105,17 @@ func (c *Client) Authenticate(
 	return
 }
 
-// NeedAuth
+// NeedAuth returns true if the client needs authentication
 func (c *Client) NeedAuth() bool {
 	return c.Token == ""
+}
+
+// SetToken sets the authentication token directly and configures the HTTP client
+func (c *Client) SetToken(token string) {
+	c.Token = token
+	c.HTTPClient.Transport = Chain(
+		nil,
+		AddHeader(http.CanonicalHeaderKey("authorization"), fmt.Sprintf("Bearer %s", token)),
+		AddHeader(http.CanonicalHeaderKey("content-type"), "application/json"),
+	)
 }

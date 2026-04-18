@@ -65,7 +65,7 @@ type ClassTypeFiltersResponse struct {
 	Items []FilterItem
 }
 
-// GetStudiosSchedules
+// GetStudiosSchedules retrieves class schedules for the given studio IDs.
 func (c *Client) GetStudiosSchedules(
 	ctx context.Context,
 	studioIDs []string,

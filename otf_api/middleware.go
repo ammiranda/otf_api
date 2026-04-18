@@ -10,6 +10,7 @@ func (rt internalRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 
 type Middleware func(http.RoundTripper) http.RoundTripper
 
+// Chain applies multiple middlewares to a RoundTripper
 func Chain(rt http.RoundTripper, middlewares ...Middleware) http.RoundTripper {
 	if rt == nil {
 		rt = http.DefaultTransport
@@ -22,6 +23,7 @@ func Chain(rt http.RoundTripper, middlewares ...Middleware) http.RoundTripper {
 	return rt
 }
 
+// AddHeader creates a middleware that adds a header to requests
 func AddHeader(key string, value string) Middleware {
 	return func(rt http.RoundTripper) http.RoundTripper {
 		return internalRoundTripper(func(req *http.Request) (*http.Response, error) {
