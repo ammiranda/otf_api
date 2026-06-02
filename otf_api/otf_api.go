@@ -2,12 +2,9 @@ package otf_api
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 type Client struct {
@@ -24,11 +21,6 @@ type Client struct {
 }
 
 func getEnvVar(key string) string {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	return os.Getenv(key)
 }
 

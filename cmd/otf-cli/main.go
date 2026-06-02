@@ -38,6 +38,8 @@ type IPLocation struct {
 type CLIConfig struct {
 	PreferredStudioIDs []string `json:"preferred_studio_ids,omitempty"`
 	Timezone           string   `json:"timezone,omitempty"`
+	Token              string   `json:"token,omitempty"`
+	RefreshToken       string   `json:"refresh_token,omitempty"`
 }
 
 var rootCmd = &cobra.Command{
@@ -54,161 +56,214 @@ var configureCmd = &cobra.Command{
 	Long:  `Provides commands to configure various settings for the otf-cli, such as preferred studios.`,
 }
 
+var (
+	configureStudioJSON bool
+	configureStudioLat  float64
+	configureStudioLong float64
+	configureStudioDist float64
+	configureStudioSave bool
+)
+
 var configureStudiosCmd = &cobra.Command{
 	Use:   "studios",
 	Short: "Configure preferred OTF studios",
-	Long: `Allows you to search for OTF studios by location and save your preferred ones. 
-These saved studios will be used by the 'schedules' command if no --studio-ids are specified.`,
+	Long: `Allows you to search for OTF studios by location and save your preferred ones.
+
+With --lat, --long, --distance, runs non-interactively.
+With --json, outputs the studio list as JSON.
+With --save, saves the selected studio IDs as preferred.
+
+Examples:
+  otf-cli configure studios --lat 40.7128 --long -74.0060 --distance 10 --json
+  otf-cli configure studios --lat 40.7128 --long -74.0060 --distance 10 --json --save`,
 	Run: func(cmd *cobra.Command, args []string) {
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
-
-		if username == "" || password == "" {
-			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
-		}
-
-		apiClient, err := otf_api.NewClient()
-		if err != nil {
-			log.Fatalf("Error creating API client: %v", err)
-		}
-
 		ctx := context.Background()
-		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
-			log.Fatalf("Error authenticating: %v", authErr)
-		}
+		apiClient := setupClient(ctx)
 
-		// Get location information
-		var lat, long float64
-		var locationSource string
+		var lat, long, dist float64
+		useFlags := cmd.Flags().Changed("lat") || cmd.Flags().Changed("long") || cmd.Flags().Changed("distance")
 
-		// Try to get location from ip-api.com
-		resp, err := http.Get("http://ip-api.com/json/")
-		if err == nil {
-			defer func() {
-				if err := resp.Body.Close(); err != nil {
-					log.Printf("error closing response body: %v", err)
+		if useFlags {
+			lat = configureStudioLat
+			long = configureStudioLong
+			dist = configureStudioDist
+			if lat == 0 && long == 0 {
+				log.Fatal("--lat and --long must be provided")
+			}
+			if dist <= 0 {
+				dist = 10
+			}
+		} else {
+			// Interactive location detection
+			var locationSource string
+
+			resp, err := http.Get("http://ip-api.com/json/")
+			if err == nil {
+				defer func() {
+					if err := resp.Body.Close(); err != nil {
+						log.Printf("error closing response body: %v", err)
+					}
+				}()
+				var location IPLocation
+				if err := json.NewDecoder(resp.Body).Decode(&location); err == nil {
+					lat = location.Lat
+					long = location.Lon
+					locationSource = fmt.Sprintf("detected from your IP in %s, %s, %s",
+						location.City, location.Region, location.Country)
 				}
-			}()
-			var location IPLocation
-			if err := json.NewDecoder(resp.Body).Decode(&location); err == nil {
-				lat = location.Lat
-				long = location.Lon
-				locationSource = fmt.Sprintf("detected from your IP in %s, %s, %s",
-					location.City,
-					location.Region,
-					location.Country)
 			}
-		}
-		if err != nil || locationSource == "" {
-			log.Printf("Warning: Could not detect location from IP: %v", err)
-		}
+			if err != nil || locationSource == "" {
+				log.Printf("Warning: Could not detect location from IP: %v", err)
+			}
 
-		// If location detection failed, prompt for manual input
-		if lat == 0 && long == 0 {
-			locationQs := []*survey.Question{
-				{Name: "latitude", Prompt: &survey.Input{Message: "Enter your latitude (e.g., 40.7128):"}, Validate: survey.Required},
-				{Name: "longitude", Prompt: &survey.Input{Message: "Enter your longitude (e.g., -74.0060):"}, Validate: survey.Required},
+			if lat == 0 && long == 0 {
+				locationQs := []*survey.Question{
+					{Name: "latitude", Prompt: &survey.Input{Message: "Enter your latitude (e.g., 40.7128):"}, Validate: survey.Required},
+					{Name: "longitude", Prompt: &survey.Input{Message: "Enter your longitude (e.g., -74.0060):"}, Validate: survey.Required},
+				}
+				locationAnswers := struct {
+					Latitude  string `survey:"latitude"`
+					Longitude string `survey:"longitude"`
+				}{}
+				if err := survey.Ask(locationQs, &locationAnswers); err != nil {
+					log.Fatalf("Error getting location input: %v", err)
+				}
+				var errLat, errLong error
+				lat, errLat = strconv.ParseFloat(locationAnswers.Latitude, 64)
+				long, errLong = strconv.ParseFloat(locationAnswers.Longitude, 64)
+				if errLat != nil || errLong != nil {
+					log.Fatalf("Invalid numeric input for latitude or longitude.")
+				}
+				locationSource = "manually entered"
 			}
-			locationAnswers := struct {
-				Latitude  string `survey:"latitude"`
-				Longitude string `survey:"longitude"`
+
+			distanceQs := []*survey.Question{
+				{Name: "distance", Prompt: &survey.Input{Message: "Enter search distance in miles (e.g., 10):"}, Validate: survey.Required},
+			}
+			distanceAnswers := struct {
+				Distance string `survey:"distance"`
 			}{}
-
-			if err := survey.Ask(locationQs, &locationAnswers); err != nil {
-				log.Fatalf("Error getting location input: %v", err)
+			if err := survey.Ask(distanceQs, &distanceAnswers); err != nil {
+				log.Fatalf("Error getting distance input: %v", err)
 			}
-
-			var errLat, errLong error
-			lat, errLat = strconv.ParseFloat(locationAnswers.Latitude, 64)
-			long, errLong = strconv.ParseFloat(locationAnswers.Longitude, 64)
-
-			if errLat != nil || errLong != nil {
-				log.Fatalf("Invalid numeric input for latitude or longitude. Please ensure they are valid numbers.")
+			dist, err = strconv.ParseFloat(distanceAnswers.Distance, 64)
+			if err != nil {
+				log.Fatalf("Invalid numeric input for distance.")
 			}
-			locationSource = "manually entered"
+			log.Printf("Using location %s: %.6f, %.6f", locationSource, lat, long)
 		}
 
-		// Prompt for distance
-		distanceQs := []*survey.Question{
-			{Name: "distance", Prompt: &survey.Input{Message: "Enter search distance in miles (e.g., 10):"}, Validate: survey.Required},
-		}
-		distanceAnswers := struct {
-			Distance string `survey:"distance"`
-		}{}
-
-		if err := survey.Ask(distanceQs, &distanceAnswers); err != nil {
-			log.Fatalf("Error getting distance input: %v", err)
-		}
-
-		dist, errDist := strconv.ParseFloat(distanceAnswers.Distance, 64)
-		if errDist != nil {
-			log.Fatalf("Invalid numeric input for distance. Please ensure it is a valid number.")
-		}
-
-		log.Printf("Using location %s: %.6f, %.6f", locationSource, lat, long)
-		log.Println("Fetching studios near you...")
+		log.Printf("Fetching studios near %.6f, %.6f (%.1f miles)...", lat, long, dist)
 		studioListResponse, err := apiClient.ListStudios(ctx, lat, long, dist)
 		if err != nil {
 			log.Fatalf("Error fetching studios: %v", err)
 		}
 
-		if len(studioListResponse.Data.Data) == 0 {
-			log.Println("No studios found for the given location and distance. Try increasing the distance or checking your coordinates.")
-			return
+		if configureStudioJSON {
+			writeJSON(studioListResponse)
 		}
 
-		// Prepare for multi-select
-		studioOptions := []string{}
-		studioMap := make(map[string]string) // Maps display name to StudioUUID
-		for _, studio := range studioListResponse.Data.Data {
-			displayName := fmt.Sprintf("%s (ID: %s, %.2f miles)", studio.StudioName, studio.StudioUUID, studio.Distance)
-			studioOptions = append(studioOptions, displayName)
-			studioMap[displayName] = studio.StudioUUID
-		}
-
-		selectedDisplayNames := []string{}
-		prompt := &survey.MultiSelect{
-			Message:  "Select your preferred studios (use space to select, enter to confirm):",
-			Options:  studioOptions,
-			PageSize: 15, // Adjust as needed
-		}
-		if err := survey.AskOne(prompt, &selectedDisplayNames); err != nil {
-			log.Fatalf("Error during studio selection: %v", err)
-		}
-
-		selectedStudioIDs := []string{}
-		for _, displayName := range selectedDisplayNames {
-			if id, ok := studioMap[displayName]; ok {
-				selectedStudioIDs = append(selectedStudioIDs, id)
+		if configureStudioSave && len(studioListResponse.Data.Data) > 0 {
+			ids := make([]string, len(studioListResponse.Data.Data))
+			for i, s := range studioListResponse.Data.Data {
+				ids[i] = s.StudioUUID
 			}
+			config, err := loadConfig()
+			if err != nil {
+				log.Printf("Warning: Could not load config: %v", err)
+				config = CLIConfig{}
+			}
+			config.PreferredStudioIDs = ids
+			if err := saveConfig(config); err != nil {
+				log.Fatalf("Error saving configuration: %v", err)
+			}
+			log.Printf("Saved %d studios as preferred", len(ids))
 		}
 
-		config, err := loadConfig()
-		if err != nil {
-			log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
-			// Proceed with an empty config if loading fails, as saveConfig will create it
-			config = CLIConfig{}
-		}
+		if !configureStudioJSON && !configureStudioSave {
+			// Interactive mode
+			if len(studioListResponse.Data.Data) == 0 {
+				log.Println("No studios found.")
+				return
+			}
 
-		config.PreferredStudioIDs = selectedStudioIDs
-		if err := saveConfig(config); err != nil {
-			log.Fatalf("Error saving configuration: %v", err)
-		}
+			studioOptions := []string{}
+			studioMap := make(map[string]string)
+			for _, studio := range studioListResponse.Data.Data {
+				displayName := fmt.Sprintf("%s (ID: %s, %.2f miles)", studio.StudioName, studio.StudioUUID, studio.Distance)
+				studioOptions = append(studioOptions, displayName)
+				studioMap[displayName] = studio.StudioUUID
+			}
 
-		if len(selectedStudioIDs) > 0 {
-			log.Printf("Preferred studios saved: %s", strings.Join(selectedStudioIDs, ", "))
-		} else {
-			log.Println("No studios selected. Preferred studios configuration remains unchanged or empty.")
+			selectedDisplayNames := []string{}
+			prompt := &survey.MultiSelect{
+				Message:  "Select your preferred studios:",
+				Options:  studioOptions,
+				PageSize: 15,
+			}
+			if err := survey.AskOne(prompt, &selectedDisplayNames); err != nil {
+				log.Fatalf("Error during studio selection: %v", err)
+			}
+
+			selectedStudioIDs := []string{}
+			for _, displayName := range selectedDisplayNames {
+				if id, ok := studioMap[displayName]; ok {
+					selectedStudioIDs = append(selectedStudioIDs, id)
+				}
+			}
+
+			config, err := loadConfig()
+			if err != nil {
+				config = CLIConfig{}
+			}
+			config.PreferredStudioIDs = selectedStudioIDs
+			if err := saveConfig(config); err != nil {
+				log.Fatalf("Error saving configuration: %v", err)
+			}
+
+			if len(selectedStudioIDs) > 0 {
+				log.Printf("Preferred studios saved: %s", strings.Join(selectedStudioIDs, ", "))
+			} else {
+				log.Println("No studios selected.")
+			}
 		}
 	},
 }
 
+var configureTimezoneFlag string
+
 var configureTimezoneCmd = &cobra.Command{
 	Use:   "timezone",
 	Short: "Configure your preferred timezone",
-	Long:  `Set your preferred timezone for displaying class times. If not set, the system's local timezone will be used.`,
+	Long: `Set your preferred timezone for displaying class times.
+
+With --timezone, sets it directly without an interactive prompt.
+Use --timezone "" to clear and use system local timezone.
+
+Examples:
+  otf-cli configure timezone --timezone "America/New_York"
+  otf-cli configure timezone --timezone ""`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Get list of common timezones
+		config, err := loadConfig()
+		if err != nil {
+			log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
+			config = CLIConfig{}
+		}
+
+		if cmd.Flags().Changed("timezone") {
+			config.Timezone = configureTimezoneFlag
+			if err := saveConfig(config); err != nil {
+				log.Fatalf("Error saving configuration: %v", err)
+			}
+			if config.Timezone == "" {
+				fmt.Println("Timezone set to use system local timezone.")
+			} else {
+				fmt.Printf("Timezone set to: %s\n", config.Timezone)
+			}
+			return
+		}
+
+		// Interactive mode
 		timezones := []string{
 			"America/New_York",
 			"America/Chicago",
@@ -225,14 +280,6 @@ var configureTimezoneCmd = &cobra.Command{
 			"America/Portland",
 		}
 
-		// Load existing config
-		config, err := loadConfig()
-		if err != nil {
-			log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
-			config = CLIConfig{}
-		}
-
-		// If timezone is already set, add it to the list if it's not there
 		if config.Timezone != "" {
 			found := false
 			for _, tz := range timezones {
@@ -246,15 +293,12 @@ var configureTimezoneCmd = &cobra.Command{
 			}
 		}
 
-		// Add option to use system timezone
 		timezones = append(timezones, "System Local Timezone")
 
-		// Prompt for timezone selection
 		var selectedTimezone string
 		prompt := &survey.Select{
 			Message: "Select your preferred timezone:",
 			Options: timezones,
-			// Only set default if it exists in the options
 			Default: func() string {
 				if config.Timezone == "" {
 					return "System Local Timezone"
@@ -271,14 +315,12 @@ var configureTimezoneCmd = &cobra.Command{
 			log.Fatalf("Error during timezone selection: %v", err)
 		}
 
-		// If "System Local Timezone" is selected, clear the timezone setting
 		if selectedTimezone == "System Local Timezone" {
 			config.Timezone = ""
 		} else {
 			config.Timezone = selectedTimezone
 		}
 
-		// Save the configuration
 		if err := saveConfig(config); err != nil {
 			log.Fatalf("Error saving configuration: %v", err)
 		}
@@ -291,6 +333,14 @@ var configureTimezoneCmd = &cobra.Command{
 	},
 }
 
+var (
+	listBookingsJSON       bool
+	listBookingsCancelID   string
+	listBookingsCancelFlag bool
+	listBookingsYes        bool
+	cancelBookingYes       bool
+)
+
 var bookingsCmd = &cobra.Command{
 	Use:   "bookings",
 	Short: "Manage your OTF bookings",
@@ -300,35 +350,62 @@ var bookingsCmd = &cobra.Command{
 var listBookingsCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List your current bookings",
-	Long:  `Lists all your current and upcoming OrangeTheory Fitness bookings.`,
+	Long: `Lists all your current and upcoming OrangeTheory Fitness bookings.
+
+With --json, outputs bookings as JSON to stdout.
+With --cancel and --booking-id and --yes, cancels non-interactively.
+
+Examples:
+  otf-cli bookings list --json
+  otf-cli bookings list --cancel --booking-id "abc" --yes --json`,
 	Run: func(cmd *cobra.Command, args []string) {
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
-
-		if username == "" || password == "" {
-			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
-		}
-
-		apiClient, err := otf_api.NewClient()
-		if err != nil {
-			log.Fatalf("Error creating API client: %v", err)
-		}
-
 		ctx := context.Background()
-		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
-			log.Fatalf("Error authenticating: %v", authErr)
-		}
+		apiClient := setupClient(ctx)
 
-		// Get bookings from today onwards
-		startsAfter := time.Now().Truncate(24 * time.Hour) // Start of today
-		endsBefore := time.Now().AddDate(0, 0, 60)        // 60 days in the future
+		startsAfter := time.Now().Truncate(24 * time.Hour)
+		endsBefore := time.Now().AddDate(0, 0, 60)
 
 		bookings, err := apiClient.GetBookings(ctx, startsAfter, endsBefore, true)
 		if err != nil {
 			log.Fatalf("Error fetching bookings: %v", err)
 		}
 
+		// Non-interactive cancel via --cancel --booking-id
+		if listBookingsCancelFlag && listBookingsCancelID != "" {
+			if !listBookingsYes {
+				var shouldCancel bool
+				prompt := &survey.Confirm{
+					Message: fmt.Sprintf("Are you sure you want to cancel booking %s?", listBookingsCancelID),
+				}
+				if err := survey.AskOne(prompt, &shouldCancel); err != nil {
+					log.Fatalf("Error during cancellation confirmation: %v", err)
+				}
+				if !shouldCancel {
+					fmt.Println("Cancellation aborted.")
+					return
+				}
+			}
 
+			err = apiClient.CancelBooking(ctx, listBookingsCancelID)
+			if err != nil {
+				log.Fatalf("Error canceling booking: %v", err)
+			}
+
+			if listBookingsJSON {
+				writeJSON(map[string]string{"status": "canceled", "booking_id": listBookingsCancelID})
+				return
+			}
+			fmt.Printf("Successfully canceled booking %s\n", listBookingsCancelID)
+			return
+		}
+
+		// JSON output
+		if listBookingsJSON {
+			writeJSON(bookings)
+			return
+		}
+
+		// Interactive mode (existing behavior)
 		if len(bookings) == 0 {
 			fmt.Println("No bookings found.")
 			return
@@ -340,7 +417,6 @@ var listBookingsCmd = &cobra.Command{
 			config = CLIConfig{}
 		}
 
-		// Filter out canceled bookings for selection
 		activeBookings := []otf_api.BookingRequest{}
 		for _, booking := range bookings {
 			if !booking.Canceled {
@@ -353,17 +429,15 @@ var listBookingsCmd = &cobra.Command{
 			return
 		}
 
-		// Prepare booking options for selection
 		bookingOptions := []string{}
 		bookingMap := make(map[string]otf_api.BookingRequest)
 
 		for _, booking := range activeBookings {
 			classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
 			if err != nil {
-				classTime = time.Now() // fallback
+				classTime = time.Now()
 			}
 
-			// Get the day string for display
 			displayTime := classTime
 			if config.Timezone != "" {
 				if loc, err := time.LoadLocation(config.Timezone); err == nil {
@@ -382,10 +456,8 @@ var listBookingsCmd = &cobra.Command{
 			bookingMap[displayStr] = booking
 		}
 
-		// Add option to just view without canceling
 		bookingOptions = append(bookingOptions, "Just view bookings (no action)")
 
-		// Prompt for booking selection
 		var selectedBookingDisplay string
 		prompt := &survey.Select{
 			Message:  "Select a booking to cancel (or just view):",
@@ -396,11 +468,8 @@ var listBookingsCmd = &cobra.Command{
 			log.Fatalf("Error during booking selection: %v", err)
 		}
 
-		// If user chose to just view, show all bookings and exit
 		if selectedBookingDisplay == "Just view bookings (no action)" {
 			fmt.Printf("\nYour Bookings (%d total):\n\n", len(bookings))
-			
-			// Group bookings by day similar to schedules
 			lastDay := ""
 			for i, booking := range bookings {
 				status := "Booked"
@@ -414,10 +483,9 @@ var listBookingsCmd = &cobra.Command{
 
 				classTime, err := time.Parse(time.RFC3339, booking.Class.StartsAt)
 				if err != nil {
-					classTime = time.Now() // fallback
+					classTime = time.Now()
 				}
 
-				// Get the day string (e.g., 'Mon Jan 2')
 				bookingDay := classTime.Format("Mon Jan 2")
 				if config.Timezone != "" {
 					if loc, err := time.LoadLocation(config.Timezone); err == nil {
@@ -425,9 +493,8 @@ var listBookingsCmd = &cobra.Command{
 					}
 				}
 
-				// Insert day header if this is a new day
 				if bookingDay != lastDay {
-					if i > 0 { // Add spacing between days (except before first day)
+					if i > 0 {
 						fmt.Println()
 					}
 					header := fmt.Sprintf("=== %s ===", bookingDay)
@@ -445,13 +512,11 @@ var listBookingsCmd = &cobra.Command{
 			return
 		}
 
-		// Get the selected booking
 		selectedBooking, ok := bookingMap[selectedBookingDisplay]
 		if !ok {
 			log.Fatal("Error: Selected booking not found")
 		}
 
-		// Confirm cancellation
 		classTime, _ := time.Parse(time.RFC3339, selectedBooking.Class.StartsAt)
 		fmt.Printf("\nSelected Booking:\n")
 		fmt.Printf("Class: %s\n", selectedBooking.Class.Name)
@@ -472,14 +537,13 @@ var listBookingsCmd = &cobra.Command{
 			return
 		}
 
-		// Cancel the booking
 		err = apiClient.CancelBooking(ctx, selectedBooking.ID)
 		if err != nil {
 			log.Fatalf("Error canceling booking: %v", err)
 		}
 
-		fmt.Printf("Successfully canceled booking for %s at %s\n", 
-			selectedBooking.Class.Name, 
+		fmt.Printf("Successfully canceled booking for %s at %s\n",
+			selectedBooking.Class.Name,
 			selectedBooking.Class.Studio.Name)
 	},
 }
@@ -487,42 +551,33 @@ var listBookingsCmd = &cobra.Command{
 var cancelBookingCmd = &cobra.Command{
 	Use:   "cancel [booking-id]",
 	Short: "Cancel a booking",
-	Long:  `Cancel a booking by providing the booking ID. Use 'otf-cli bookings list' to see your booking IDs.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Cancel a booking by providing the booking ID.
+
+With --yes, skips the confirmation prompt.
+
+Examples:
+  otf-cli bookings cancel <id> --yes`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		bookingID := args[0]
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
-
-		if username == "" || password == "" {
-			log.Fatal("Error: OTF_USERNAME and OTF_PASSWORD environment variables must be set.")
-		}
-
-		apiClient, err := otf_api.NewClient()
-		if err != nil {
-			log.Fatalf("Error creating API client: %v", err)
-		}
-
 		ctx := context.Background()
-		if authErr := apiClient.Authenticate(ctx, username, password); authErr != nil {
-			log.Fatalf("Error authenticating: %v", authErr)
+		apiClient := setupClient(ctx)
+
+		if !cancelBookingYes {
+			var shouldCancel bool
+			prompt := &survey.Confirm{
+				Message: fmt.Sprintf("Are you sure you want to cancel booking %s?", bookingID),
+			}
+			if err := survey.AskOne(prompt, &shouldCancel); err != nil {
+				log.Fatalf("Error during cancellation confirmation: %v", err)
+			}
+			if !shouldCancel {
+				fmt.Println("Cancellation aborted.")
+				return
+			}
 		}
 
-		// Confirm cancellation
-		var shouldCancel bool
-		prompt := &survey.Confirm{
-			Message: fmt.Sprintf("Are you sure you want to cancel booking %s?", bookingID),
-		}
-		if err := survey.AskOne(prompt, &shouldCancel); err != nil {
-			log.Fatalf("Error during cancellation confirmation: %v", err)
-		}
-
-		if !shouldCancel {
-			fmt.Println("Cancellation aborted.")
-			return
-		}
-
-		err = apiClient.CancelBooking(ctx, bookingID)
+		err := apiClient.CancelBooking(ctx, bookingID)
 		if err != nil {
 			log.Fatalf("Error canceling booking: %v", err)
 		}
@@ -531,50 +586,43 @@ var cancelBookingCmd = &cobra.Command{
 	},
 }
 
+var (
+	scheduleJSON     bool
+	scheduleClassID  string
+	scheduleBook     bool
+	scheduleYes      bool
+)
+
 var schedulesCmd = &cobra.Command{
 	Use:   "schedules",
 	Short: "Fetch studio schedules",
-	Long:  `Fetches schedules for the specified studio IDs. Requires OTF_USERNAME, OTF_PASSWORD, and OTF_CLIENT_ID environment variables. If --studio-ids is not provided, it will try to use saved preferred studios.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		username := getEnvVar("OTF_USERNAME")
-		password := getEnvVar("OTF_PASSWORD")
-		clientID := getEnvVar("OTF_CLIENT_ID") // Keep this for explicitness, though Authenticate also gets it
+	Long: `Fetches schedules for the specified studio IDs.
 
-		if username == "" || password == "" || clientID == "" {
-			log.Fatal("Error: OTF_USERNAME, OTF_PASSWORD, and OTF_CLIENT_ID environment variables must be set.")
-		}
+With --json, outputs the schedule as JSON to stdout (logs go to stderr).
+With --class-id, --book, and --yes, books a class non-interactively.
+
+Examples:
+  otf-cli schedules --studio-ids "abc,def" --json
+  otf-cli schedules --studio-ids "abc,def" --class-id "xyz" --book --yes --json`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		apiClient := setupClient(ctx)
 
 		var idsToFetch []string
 
-		if studioIDs != "" { // Flag is provided
+		if studioIDs != "" {
 			idsToFetch = strings.Split(studioIDs, ",")
 		} else {
-			// Flag not provided, try to load from config
 			config, err := loadConfig()
 			if err != nil {
-				log.Fatalf("Error loading configuration to get preferred studios: %v. Please run 'otf-cli configure studios' or provide --studio-ids.", err)
+				log.Fatalf("Error loading configuration: %v. Provide --studio-ids or run 'otf-cli configure studios'.", err)
 			}
 			if len(config.PreferredStudioIDs) > 0 {
 				idsToFetch = config.PreferredStudioIDs
 				log.Printf("Using preferred studio IDs from configuration: %s", strings.Join(idsToFetch, ", "))
 			} else {
-				log.Fatal("Error: No studio IDs provided via --studio-ids flag and no preferred studios found in configuration. Please run 'otf-cli configure studios' or provide the --studio-ids flag.")
+				log.Fatal("No studio IDs provided via --studio-ids and no preferred studios configured.")
 			}
-		}
-
-		if len(idsToFetch) == 0 {
-			log.Fatal("Error: No studio IDs to fetch. This should not happen if logic above is correct.") // Should be caught by earlier checks
-		}
-
-		apiClient, err := otf_api.NewClient()
-		if err != nil {
-			log.Fatalf("Error creating API client: %v", err)
-		}
-
-		ctx := context.Background()
-		authErr := apiClient.Authenticate(ctx, username, password)
-		if authErr != nil {
-			log.Fatalf("Error authenticating: %v", authErr)
 		}
 
 		schedules, err := apiClient.GetStudiosSchedules(ctx, idsToFetch)
@@ -582,29 +630,31 @@ var schedulesCmd = &cobra.Command{
 			log.Fatalf("Error fetching schedules: %v", err)
 		}
 
+		if scheduleJSON {
+			writeJSON(schedules)
+			return
+		}
+
+		// Interactive mode (existing behavior)
 		if len(schedules.Items) == 0 {
 			log.Println("No classes found for the selected studios.")
 			return
 		}
 
-		// Load config for timezone
 		config, err := loadConfig()
 		if err != nil {
 			log.Printf("Warning: Could not load configuration: %v", err)
 			config = CLIConfig{}
 		}
 
-		// Prepare class options for selection
 		classOptions := []string{}
 		classMap := make(map[string]otf_api.StudioClass)
 
-		// Define a list of color names supported by ansi.Color
 		studioColors := []string{"red", "green", "yellow", "blue", "magenta", "cyan", "white"}
-		studioColorMap := make(map[string]string) // studioID -> color name
+		studioColorMap := make(map[string]string)
 		colorIdx := 0
 
-		// Detect terminal width and set breakpoints
-		termWidth := 80 // default fallback
+		termWidth := 80
 		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 			termWidth = w
 		}
@@ -617,7 +667,6 @@ var schedulesCmd = &cobra.Command{
 			entryWidth = 70
 		}
 
-		// First, collect max widths for each column (class name, start time, end time)
 		maxClassName := 0
 		maxStartTime := 0
 		maxEndTime := 0
@@ -638,23 +687,19 @@ var schedulesCmd = &cobra.Command{
 			}
 		}
 
-		// Add a minimum space between columns
 		minSpace := 2
-		// Studio column will use the rest of the width
 		studioColStart := maxClassName + minSpace + maxStartTime + minSpace + maxEndTime + minSpace
 		studioColWidth := entryWidth - studioColStart
 		if studioColWidth < 10 {
-			studioColWidth = 10 // fallback to avoid negative/too small
+			studioColWidth = 10
 		}
 
-		// Group classes by day
 		lastDay := ""
 		for _, class := range schedules.Items {
 			if class.Canceled {
-				continue // Skip canceled classes
+				continue
 			}
 
-			// Assign a color to the studio if not already assigned
 			studioID := class.Studio.ID
 			studioName := class.Studio.Name
 			colorName, ok := studioColorMap[studioID]
@@ -664,11 +709,9 @@ var schedulesCmd = &cobra.Command{
 				colorIdx++
 			}
 
-			// Format the class time using configured timezone
 			startTime := formatTime(class.StartsAt, config)
 			endTime := formatTime(class.EndsAt, config)
 
-			// Get the day string (e.g., 'Mon Jan 2')
 			classDay := class.StartsAt.Format("Mon Jan 2")
 			if config.Timezone != "" {
 				if loc, err := time.LoadLocation(config.Timezone); err == nil {
@@ -676,23 +719,19 @@ var schedulesCmd = &cobra.Command{
 				}
 			}
 
-			// Insert day header if this is a new day
 			if classDay != lastDay {
 				header := fmt.Sprintf("=== %s ===", classDay)
 				classOptions = append(classOptions, header)
 				lastDay = classDay
 			}
 
-			// Color the studio name only
 			coloredStudio := ansi.Color(studioName, colorName)
 
-			// Pad each column to its max width
 			classNameCol := padOrTruncate(class.Name, maxClassName)
 			startTimeCol := padOrTruncate(startTime, maxStartTime)
 			endTimeCol := padOrTruncate(endTime, maxEndTime)
 			studioCol := padOrTruncate(coloredStudio, studioColWidth)
 
-			// Create a display string with aligned columns
 			displayStr := fmt.Sprintf("%s%s%s%s%s%s%s",
 				classNameCol, strings.Repeat(" ", minSpace),
 				startTimeCol, strings.Repeat(" ", minSpace),
@@ -700,7 +739,6 @@ var schedulesCmd = &cobra.Command{
 				studioCol,
 			)
 
-			// Truncate to entryWidth if needed
 			displayStr = padOrTruncate(displayStr, entryWidth)
 
 			classOptions = append(classOptions, displayStr)
@@ -712,7 +750,61 @@ var schedulesCmd = &cobra.Command{
 			return
 		}
 
-		// Prompt for class selection
+		// Non-interactive booking mode
+		if scheduleClassID != "" && scheduleBook {
+			selectedClass, ok := findClassByID(schedules.Items, scheduleClassID)
+			if !ok {
+				log.Fatalf("Class %s not found in schedule", scheduleClassID)
+			}
+
+			needsWaitlist := selectedClass.BookingCapacity <= 0
+
+			if needsWaitlist && !scheduleYes {
+				var useWaitlist bool
+				waitlistPrompt := &survey.Confirm{
+					Message: "This class is full. Would you like to join the waitlist?",
+				}
+				if err := survey.AskOne(waitlistPrompt, &useWaitlist); err != nil {
+					log.Fatalf("Error during waitlist confirmation: %v", err)
+				}
+				if !useWaitlist {
+					fmt.Println("Booking cancelled.")
+					return
+				}
+			}
+
+			bookingReq := otf_api.CreateBookingRequest{
+				ClassID:   selectedClass.ID,
+				Confirmed: false,
+				Waitlist:  needsWaitlist,
+			}
+
+			err := apiClient.BookClass(ctx, bookingReq)
+			if err != nil {
+				log.Fatalf("Error booking class: %v", err)
+			}
+
+			if scheduleJSON {
+				result := map[string]any{
+					"status":   "booked",
+					"class_id": selectedClass.ID,
+					"name":     selectedClass.Name,
+					"studio":   selectedClass.Studio.Name,
+					"waitlist": needsWaitlist,
+				}
+				writeJSON(result)
+				return
+			}
+
+			if needsWaitlist {
+				fmt.Println("Successfully added to waitlist!")
+			} else {
+				fmt.Println("Successfully booked the class!")
+			}
+			return
+		}
+
+		// Interactive selection (existing behavior)
 		var selectedClassDisplay string
 		prompt := &survey.Select{
 			Message:  "Select a class to book:",
@@ -723,13 +815,11 @@ var schedulesCmd = &cobra.Command{
 			log.Fatalf("Error during class selection: %v", err)
 		}
 
-		// Skip header lines
 		selectedClass, ok := classMap[selectedClassDisplay]
 		if !ok {
 			log.Fatal("Error: Selected class not found in class map")
 		}
 
-		// Display selected class details
 		fmt.Printf("\nSelected Class Details:\n")
 		fmt.Printf("Class: %s\n", selectedClass.Name)
 		fmt.Printf("Studio: %s\n", selectedClass.Studio.Name)
@@ -741,7 +831,6 @@ var schedulesCmd = &cobra.Command{
 			selectedClass.MaxCapacity)
 		fmt.Printf("Class ID: %s\n", selectedClass.ID)
 
-		// Ask if user wants to book the class
 		var shouldBook bool
 		bookPrompt := &survey.Confirm{
 			Message: "Would you like to book this class?",
@@ -751,7 +840,6 @@ var schedulesCmd = &cobra.Command{
 		}
 
 		if shouldBook {
-			// Check if class is full and needs waitlist
 			needsWaitlist := selectedClass.BookingCapacity <= 0
 			if needsWaitlist {
 				var useWaitlist bool
@@ -767,14 +855,12 @@ var schedulesCmd = &cobra.Command{
 				}
 			}
 
-			// Use the actual format from Charles Proxy capture
 			bookingReq := otf_api.CreateBookingRequest{
 				ClassID:   selectedClass.ID,
 				Confirmed: false,
 				Waitlist:  needsWaitlist,
 			}
 
-			// Attempt to book the class
 			err := apiClient.BookClass(ctx, bookingReq)
 			if err != nil {
 				log.Fatalf("Error booking class: %v", err)
@@ -789,6 +875,62 @@ var schedulesCmd = &cobra.Command{
 			fmt.Println("Booking cancelled.")
 		}
 	},
+}
+
+func findClassByID(classes []otf_api.StudioClass, id string) (otf_api.StudioClass, bool) {
+	for _, c := range classes {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return otf_api.StudioClass{}, false
+}
+
+// writeJSON writes v as JSON to stdout. Must only be called once per command.
+func writeJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		log.Fatalf("error encoding JSON: %v", err)
+	}
+}
+
+// setupClient creates an authenticated API client.
+// It tries a cached token first, then falls back to env var credentials.
+func setupClient(ctx context.Context) *otf_api.Client {
+	apiClient, err := otf_api.NewClient()
+	if err != nil {
+		log.Fatalf("Error creating API client: %v", err)
+	}
+
+	config, cfgErr := loadConfig()
+	tryToken := cfgErr == nil && config.Token != ""
+
+	if tryToken {
+		apiClient.SetToken(config.Token)
+		apiClient.RefreshToken = config.RefreshToken
+		if !apiClient.NeedAuth() {
+			return apiClient
+		}
+	}
+
+	username := os.Getenv("OTF_USERNAME")
+	password := os.Getenv("OTF_PASSWORD")
+	if username == "" || password == "" {
+		log.Fatal("OTF_USERNAME and OTF_PASSWORD environment variables must be set (or cache a token by running a command interactively first)")
+	}
+
+	if err := apiClient.Authenticate(ctx, username, password); err != nil {
+		log.Fatalf("Error authenticating: %v", err)
+	}
+
+	config.Token = apiClient.Token
+	config.RefreshToken = apiClient.RefreshToken
+	if saveErr := saveConfig(config); saveErr != nil {
+		log.Printf("Warning: could not cache token: %v", saveErr)
+	}
+
+	return apiClient
 }
 
 // Helper to pad or truncate a string to a fixed width
@@ -855,11 +997,6 @@ func saveConfig(config CLIConfig) error {
 	return nil
 }
 
-func getEnvVar(key string) string {
-	val := os.Getenv(key)
-	return val
-}
-
 // formatTime formats a time.Time value according to the configured timezone
 func formatTime(t time.Time, config CLIConfig) string {
 	if config.Timezone == "" {
@@ -881,25 +1018,33 @@ func formatTime(t time.Time, config CLIConfig) string {
 func init() {
 	rootCmd.AddCommand(schedulesCmd)
 	schedulesCmd.Flags().StringVar(&studioIDs, "studio-ids", "", "Comma-separated list of studio IDs (optional if preferred studios are configured)")
+	schedulesCmd.Flags().BoolVar(&scheduleJSON, "json", false, "Output schedule as JSON")
+	schedulesCmd.Flags().StringVar(&scheduleClassID, "class-id", "", "Class ID to book (requires --book)")
+	schedulesCmd.Flags().BoolVar(&scheduleBook, "book", false, "Book the class specified by --class-id")
+	schedulesCmd.Flags().BoolVar(&scheduleYes, "yes", false, "Skip confirmation prompts")
 
-	// Add bookings commands
 	rootCmd.AddCommand(bookingsCmd)
 	bookingsCmd.AddCommand(listBookingsCmd)
 	bookingsCmd.AddCommand(cancelBookingCmd)
+	listBookingsCmd.Flags().BoolVar(&listBookingsJSON, "json", false, "Output bookings as JSON")
+	listBookingsCmd.Flags().StringVar(&listBookingsCancelID, "booking-id", "", "Booking ID to cancel (requires --cancel)")
+	listBookingsCmd.Flags().BoolVar(&listBookingsCancelFlag, "cancel", false, "Cancel the booking specified by --booking-id")
+	listBookingsCmd.Flags().BoolVar(&listBookingsYes, "yes", false, "Skip cancellation confirmation")
+	cancelBookingCmd.Flags().BoolVar(&cancelBookingYes, "yes", false, "Skip confirmation prompt")
 
-	// Add configure commands
 	rootCmd.AddCommand(configureCmd)
 	configureCmd.AddCommand(configureStudiosCmd)
+	configureStudiosCmd.Flags().BoolVar(&configureStudioJSON, "json", false, "Output studio list as JSON")
+	configureStudiosCmd.Flags().Float64Var(&configureStudioLat, "lat", 0, "Latitude for studio search")
+	configureStudiosCmd.Flags().Float64Var(&configureStudioLong, "long", 0, "Longitude for studio search")
+	configureStudiosCmd.Flags().Float64Var(&configureStudioDist, "distance", 10, "Search radius in miles")
+	configureStudiosCmd.Flags().BoolVar(&configureStudioSave, "save", false, "Save all found studios as preferred")
 	configureCmd.AddCommand(configureTimezoneCmd)
+	configureTimezoneCmd.Flags().StringVar(&configureTimezoneFlag, "timezone", "", "Set timezone directly (e.g. America/New_York). Empty string clears it.")
 }
 
 func main() {
-	// Load .env file. Errors are ignored if .env doesn't exist.
-	err := godotenv.Load()
-	if err != nil {
-		log.Printf("Error loading .env file: %v", err)
-		os.Exit(1)
-	}
+	_ = godotenv.Load() // optional; env vars may come from the environment
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Whoops. There was an error while executing your CLI '%s'", err)
