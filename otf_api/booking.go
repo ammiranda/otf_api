@@ -165,8 +165,6 @@ func (c *Client) CancelBooking(
 		return fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers
-	req.Header.Set("Authorization", c.Token)
 	req.Header.Set("otf-locale", "en_US")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
@@ -218,8 +216,6 @@ func (c *Client) GetBookings(
 		return nil, fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers
-	req.Header.Set("Authorization", c.Token)
 	req.Header.Set("otf-locale", "en_US")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
