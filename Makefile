@@ -13,5 +13,5 @@ create-env:
 build-cli:
 	@echo "Building CLI..."
 	@mkdir -p bin
-	go build -o bin/otf-cli ./cmd/otf-cli/main.go
+	go build -o bin/otf-cli ./cmd/otf-cli/
 	@echo "CLI built successfully to bin/otf-cli"
