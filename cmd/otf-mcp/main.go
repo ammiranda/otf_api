@@ -221,6 +221,24 @@ func (s *MCPServer) handleToolsList(id any) {
 			}`),
 		},
 		{
+			Name:        "book_class",
+			Description: "Book an OTF class by its class ID. Use waitlist=true if the class is full.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"class_id": {
+						"type": "string",
+						"description": "The class ID to book (from get_schedules)"
+					},
+					"waitlist": {
+						"type": "boolean",
+						"description": "Join waitlist if class is full (default: false)"
+					}
+				},
+				"required": ["class_id"]
+			}`),
+		},
+		{
 			Name:        "search_studios",
 			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances.",
 			InputSchema: json.RawMessage(`{
@@ -269,6 +287,8 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 		result = s.listBookings(client)
 	case "cancel_booking":
 		result = s.cancelBooking(client, call.Arguments)
+	case "book_class":
+		result = s.bookClass(client, call.Arguments)
 	case "search_studios":
 		result = s.searchStudios(client, call.Arguments)
 	default:
@@ -334,6 +354,31 @@ func (s *MCPServer) cancelBooking(client *otf_api.Client, args json.RawMessage) 
 	}
 
 	return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Successfully canceled booking %s", params.BookingID)}}}
+}
+
+func (s *MCPServer) bookClass(client *otf_api.Client, args json.RawMessage) CallToolResult {
+	var params struct {
+		ClassID  string `json:"class_id"`
+		Waitlist bool   `json:"waitlist"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil || params.ClassID == "" {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "class_id is required"}}}
+	}
+
+	bookingReq := otf_api.CreateBookingRequest{
+		ClassID:   params.ClassID,
+		Confirmed: false,
+		Waitlist:  params.Waitlist,
+	}
+
+	if err := client.BookClass(s.ctx, bookingReq); err != nil {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error booking class: %v", err)}}}
+	}
+
+	if params.Waitlist {
+		return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Successfully added to waitlist for class %s", params.ClassID)}}}
+	}
+	return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Successfully booked class %s", params.ClassID)}}}
 }
 
 func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) CallToolResult {
