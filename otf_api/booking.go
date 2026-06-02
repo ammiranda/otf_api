@@ -40,10 +40,6 @@ func (c *Client) BookClass(
 		return fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
-
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error executing request: %w", err)
