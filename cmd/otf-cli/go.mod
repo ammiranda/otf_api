@@ -1,12 +1,12 @@
-module github.com/ammiranda/otf_api/cmd/otf-cli
+module github.com/ammiranda/otf-api/cmd/otf-cli
 
 go 1.26.3
 
-replace github.com/ammiranda/otf_api => ../../
+replace github.com/ammiranda/otf-api => ../../
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/ammiranda/otf_api v0.0.0-00010101000000-000000000000
+	github.com/ammiranda/otf-api v0.0.0-00010101000000-000000000000
 	github.com/joho/godotenv v1.5.1
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d
 	github.com/spf13/cobra v1.10.2

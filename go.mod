@@ -1,4 +1,4 @@
-module github.com/ammiranda/otf_api
+module github.com/ammiranda/otf-api
 
 go 1.26
 
