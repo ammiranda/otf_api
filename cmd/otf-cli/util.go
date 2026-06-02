@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ammiranda/otf_api/otf_api"
+	"github.com/ammiranda/otf_api"
 )
 
 func setupClient(ctx context.Context) *otf_api.Client {

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/ammiranda/otf_api/otf_api"
+	"github.com/ammiranda/otf_api"
 	"github.com/mgutz/ansi"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
