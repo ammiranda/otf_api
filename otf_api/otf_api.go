@@ -11,12 +11,16 @@ import (
 )
 
 type Client struct {
-	BaseIOURL  string
-	BaseCOURL  string
-	AuthURL    string
-	Token      string
-	HTTPClient *http.Client
-	MemberID   string
+	BaseIOURL    string
+	BaseCOURL    string
+	AuthURL      string
+	Token        string
+	RefreshToken string
+	TokenExpiry  time.Time
+	HTTPClient   *http.Client
+	MemberID     string
+
+	authenticator Authenticator
 }
 
 func getEnvVar(key string) string {
@@ -29,22 +33,26 @@ func getEnvVar(key string) string {
 }
 
 // NewClient constructor that creates and returns a new instance
-// of the OTF API client.
+// of the OTF API client with a Cognito authenticator by default.
 func NewClient() (*Client, error) {
 	baseIOURL := getEnvVar("OTF_API_IO_BASE_URL")
 	baseCOURL := getEnvVar("OTF_API_CO_BASE_URL")
 	authURL := getEnvVar("OTF_AUTH_URL")
+	clientID := getEnvVar("OTF_CLIENT_ID")
 
 	if baseIOURL == "" || baseCOURL == "" || authURL == "" {
 		return nil, fmt.Errorf("base urls not configured correctly")
 	}
 
-	return &Client{
+	c := &Client{
 		BaseIOURL: baseIOURL,
 		BaseCOURL: baseCOURL,
 		AuthURL:   authURL,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-	}, nil
+		authenticator: NewCognitoAuthenticator(authURL, clientID),
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+	return c, nil
 }

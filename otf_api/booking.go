@@ -104,16 +104,11 @@ func (c *Client) BookClass(
 		return fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers based on README and Charles Proxy capture
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", c.Token)
 	req.Header.Set("otf-locale", "en_US")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("User-Agent", "Orangetheory/403 CFNetwork/3826.600.41 Darwin/24.6.0")
-	
-	// Add tracing headers that might be required
 	req.Header.Set("tracestate", "1891601@nr=0-2-1891601-162062094-9ba640a524edf6ae---1756927588442")
 	req.Header.Set("newrelic", "ewoiZCI6IHsKImFjIjogIjE4OTE2MDEiLAoiYXAiOiAiMTYyMDYyMDk0IiwKImlkIjogIjliYTY0MGE1MjRlZGY2YWUiLAoidGkiOiAxNzU2OTI3NTg4NDQyLAoidHIiOiAiNGYwYzI5MDc4NjA3NjAxODc4NGI3NTIxNTE5NzNiMDYiLAoidHkiOiAiTW9iaWxlIgp9LAoidiI6IFsKMCwKMgpdCn0=")
 	req.Header.Set("traceparent", "00-4f0c290786076018784b752151973b06-9ba640a524edf6ae-01")
@@ -170,8 +165,6 @@ func (c *Client) CancelBooking(
 		return fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers
-	req.Header.Set("Authorization", c.Token)
 	req.Header.Set("otf-locale", "en_US")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
@@ -223,8 +216,6 @@ func (c *Client) GetBookings(
 		return nil, fmt.Errorf("error preparing request: %w", err)
 	}
 
-	// Set required headers
-	req.Header.Set("Authorization", c.Token)
 	req.Header.Set("otf-locale", "en_US")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")

@@ -1,111 +1,130 @@
 package otf_api
 
 import (
-	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"strings"
+	"time"
 )
 
-type Credentials struct {
-	Username string `json:"USERNAME"`
-	Password string `json:"PASSWORD"`
+// Authenticator handles authentication with the OTF API provider.
+// Implementations handle provider-specific protocols (Cognito, OAuth2, etc.).
+type Authenticator interface {
+	// Authenticate performs initial authentication with the given
+	// credentials. The expected key/value pairs in the map are
+	// implementation-specific (e.g., "username", "password").
+	Authenticate(ctx context.Context, credentials map[string]string) (*AuthResult, error)
+
+	// RefreshAuth uses a refresh token to obtain a new token.
+	RefreshAuth(ctx context.Context, refreshToken string) (*AuthResult, error)
 }
 
-type AuthenticateRequest struct {
-	AuthParameters Credentials `json:"AuthParameters"`
-	AuthFlow       string      `json:"AuthFlow"`
-	ClientID       string      `json:"ClientId"`
+// AuthResult contains the tokens and metadata returned by an Authenticator.
+type AuthResult struct {
+	Token        string
+	RefreshToken string
+	ExpiresIn    time.Duration
 }
 
-type IDToken struct {
-	IDToken string `json:"IdToken"`
-}
-
-type AuthenticateResponse struct {
-	AuthenticationResult IDToken `json:"AuthenticationResult"`
-}
-
-// Authenticate sends an authentication request to the OTF API which
-// returns a JWT token when successful. The token will be set on
-// the client instance use in multiple requests.
+// Authenticate performs initial authentication using username and password.
 func (c *Client) Authenticate(
 	ctx context.Context,
 	username string,
 	password string,
-) (err error) {
-	if c.NeedAuth() {
-		reqBody := AuthenticateRequest{
-			AuthParameters: Credentials{
-				Username: username,
-				Password: password,
-			},
-			AuthFlow: "USER_PASSWORD_AUTH",
-			ClientID: getEnvVar("OTF_CLIENT_ID"),
-		}
-
-		jsonBody, marshalErr := json.Marshal(reqBody)
-		if marshalErr != nil {
-			err = fmt.Errorf("failed marshaling request body: %w", marshalErr)
-			return
-		}
-
-		req, reqErr := http.NewRequestWithContext(
-			ctx,
-			http.MethodPost,
-			c.AuthURL,
-			bytes.NewBuffer(jsonBody))
-		if reqErr != nil {
-			err = fmt.Errorf("error preparing request: %w", reqErr)
-			return
-		}
-
-		req.Header = http.Header{
-			"Content-Type": {
-				"application/x-amz-json-1.1",
-			},
-			"X-Amz-Target": {
-				"AWSCognitoIdentityProviderService.InitiateAuth",
-			},
-		}
-
-		res, httpErr := c.HTTPClient.Do(req)
-		if httpErr != nil {
-			err = fmt.Errorf("error authenticating: %w", httpErr)
-			return
-		}
-		defer func() {
-			if closeErr := res.Body.Close(); closeErr != nil {
-				if err == nil {
-					err = fmt.Errorf("error closing response body: %w", closeErr)
-				} else {
-					log.Printf("Failed to close response body for Authenticate (original error: %v): %v", err, closeErr)
-				}
-			}
-		}()
-
-		parsedResp := AuthenticateResponse{}
-		decodeErr := json.NewDecoder(res.Body).Decode(&parsedResp)
-		if decodeErr != nil {
-			err = fmt.Errorf("error parsing response: %w", decodeErr)
-			return
-		}
-
-		token := parsedResp.AuthenticationResult.IDToken
-		c.Token = token
-		c.HTTPClient.Transport = Chain(
-			nil,
-			AddHeader(http.CanonicalHeaderKey("authorization"), fmt.Sprintf("Bearer %s", token)),
-			AddHeader(http.CanonicalHeaderKey("content-type"), "application/json"),
-		)
+) error {
+	if !c.NeedAuth() {
+		return nil
 	}
 
-	return
+	result, err := c.authenticator.Authenticate(ctx, map[string]string{
+		"username": username,
+		"password": password,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.setAuthResult(result)
+	return nil
 }
 
-// NeedAuth
+// RefreshAuth uses the stored refresh token to obtain a new ID token.
+func (c *Client) RefreshAuth(ctx context.Context) error {
+	if c.RefreshToken == "" {
+		return fmt.Errorf("no refresh token available")
+	}
+
+	result, err := c.authenticator.RefreshAuth(ctx, c.RefreshToken)
+	if err != nil {
+		return err
+	}
+
+	c.setAuthResult(result)
+	return nil
+}
+
+// SetAuthenticator replaces the authenticator used by the client.
+func (c *Client) SetAuthenticator(a Authenticator) {
+	c.authenticator = a
+}
+
+func (c *Client) setAuthResult(result *AuthResult) {
+	c.Token = result.Token
+	c.TokenExpiry = time.Now().Add(result.ExpiresIn)
+	if result.RefreshToken != "" {
+		c.RefreshToken = result.RefreshToken
+	}
+}
+
+// NeedAuth returns true if the client needs to authenticate. It checks
+// whether the token is empty or expired (with a 5-minute buffer).
 func (c *Client) NeedAuth() bool {
-	return c.Token == ""
+	if c.Token == "" {
+		return true
+	}
+	if !c.TokenExpiry.IsZero() && time.Now().After(c.TokenExpiry.Add(-5*time.Minute)) {
+		return true
+	}
+	return false
+}
+
+// SetToken directly sets the JWT on the client and configures the
+// auth middleware transport if it hasn't been set up yet.
+func (c *Client) SetToken(token string) {
+	c.Token = token
+	if exp, err := parseTokenExpiry(token); err == nil {
+		c.TokenExpiry = exp
+	}
+	if c.HTTPClient == nil {
+		c.HTTPClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	if c.HTTPClient.Transport == nil {
+		c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+	}
+}
+
+// parseTokenExpiry extracts the exp claim from a JWT without
+// verifying the signature.
+func parseTokenExpiry(token string) (time.Time, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("invalid JWT format")
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	return time.Unix(claims.Exp, 0), nil
 }
