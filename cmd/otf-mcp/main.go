@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ammiranda/otf-api"
+	"github.com/ammiranda/otf_api/otf_api"
 )
 
 type CLIConfig struct {

@@ -3,10 +3,9 @@
 > A Go SDK, CLI, and MCP server for the OrangeTheory Fitness API — browse schedules, book classes, and manage your membership from your terminal.
 
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://golang.org)
-[![Go Reference](https://pkg.go.dev/badge/github.com/ammiranda/otf-api.svg)](https://pkg.go.dev/github.com/ammiranda/otf-api)
-[![CI](https://github.com/ammiranda/otf-api/actions/workflows/ci.yaml/badge.svg)](https://github.com/ammiranda/otf-api/actions/workflows/ci.yaml)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Install](https://img.shields.io/badge/go%20install-otf--cli-blue)](https://pkg.go.dev/github.com/ammiranda/otf-api/cmd/otf-cli)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ammiranda/otf_api.svg)](https://pkg.go.dev/github.com/ammiranda/otf_api)
+[![CI](https://github.com/ammiranda/otf_api/actions/workflows/ci.yaml/badge.svg)](https://github.com/ammiranda/otf_api/actions/workflows/ci.yaml)
+[![Install](https://img.shields.io/badge/go%20install-otf--cli-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-cli)
 
 ## What is this?
 
@@ -46,9 +45,9 @@ $ otf-cli schedules
 ### 1. Install
 
 ```bash
-go install github.com/ammiranda/otf-api/cmd/otf-cli@latest
+go install github.com/ammiranda/otf_api/cmd/otf-cli@latest
 # or build from source:
-# git clone https://github.com/ammiranda/otf-api.git && cd otf-api && make build-cli
+# git clone https://github.com/ammiranda/otf_api.git && cd otf_api && make build-cli
 ```
 
 ### 2. Configure credentials
@@ -171,7 +170,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/ammiranda/otf-api"
+    "github.com/ammiranda/otf_api/otf_api"
 )
 
 func main() {
@@ -209,7 +208,7 @@ func main() {
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────────────┐
 │  otf-cli    │────▶│              │     │                      │
-│  (terminal) │     │  otf-api     │────▶│  OrangeTheory API    │
+│  (terminal) │     │  otf_api     │────▶│  OrangeTheory API    │
 ├─────────────┤     │  (Go SDK)    │     │  (AWS Cognito Auth)  │
 │  otf-mcp    │────▶│              │     │                      │
 │  (MCP/s    ) │     └──────────────┘     └──────────────────────┘
