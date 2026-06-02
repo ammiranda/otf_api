@@ -4,5 +4,6 @@ bin/
 .vscode/
 /otf-cli
 cmd/otf-cli/otf-cli
+cmd/otf-mcp/otf-mcp
 go.work
 go.work.sum

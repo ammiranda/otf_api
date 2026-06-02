@@ -34,3 +34,9 @@ jobs:
 
       - name: Build (CLI)
         run: cd cmd/otf-cli && go build ./...
+
+      - name: Tidy (MCP)
+        run: cd cmd/otf-mcp && go mod tidy && git diff --exit-code -- go.mod go.sum
+
+      - name: Build (MCP)
+        run: cd cmd/otf-mcp && go build ./...

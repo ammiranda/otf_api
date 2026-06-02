@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "otf": {
+      "type": "local",
+      "command": ["sh", "-c", "cd cmd/otf-mcp && go run ."],
+      "enabled": true
+    }
+  }
+}
