@@ -375,10 +375,11 @@ func (s *MCPServer) bookClass(client *otf_api.Client, args json.RawMessage) Call
 		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error booking class: %v", err)}}}
 	}
 
+	msg := "Successfully booked class %s"
 	if params.Waitlist {
-		return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Successfully added to waitlist for class %s", params.ClassID)}}}
+		msg = "Successfully added to waitlist for class %s"
 	}
-	return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Successfully booked class %s", params.ClassID)}}}
+	return CallToolResult{Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(msg, params.ClassID)}}}
 }
 
 func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) CallToolResult {
