@@ -2,4 +2,6 @@
 .env
 bin/
 .vscode/
-otf-cli
+/otf-cli
+go.work
+go.work.sum

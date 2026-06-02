@@ -20,11 +20,17 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Tidy
+      - name: Tidy (library)
         run: go mod tidy && git diff --exit-code -- go.mod go.sum
 
-      - name: Build
+      - name: Build (library)
         run: go build ./...
 
-      - name: Test
+      - name: Test (library)
         run: go test -v -count=1 ./...
+
+      - name: Tidy (CLI)
+        run: cd cmd/otf-cli && go mod tidy && git diff --exit-code -- go.mod go.sum
+
+      - name: Build (CLI)
+        run: cd cmd/otf-cli && go build ./...
