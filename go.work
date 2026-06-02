@@ -1,0 +1,7 @@
+go 1.26.3
+
+use (
+	.
+	./cmd/otf-cli
+	./cmd/otf-mcp
+)

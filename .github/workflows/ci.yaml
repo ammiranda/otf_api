@@ -23,7 +23,11 @@ jobs:
           go-version: ${{ matrix.go-version }}
 
       - name: Tidy
-        run: go mod tidy && git diff --exit-code -- go.mod go.sum
+        run: |
+          go mod tidy
+          (cd cmd/otf-cli && go mod tidy)
+          (cd cmd/otf-mcp && go mod tidy)
+          git diff --exit-code -- go.mod go.sum cmd/otf-cli/go.mod cmd/otf-cli/go.sum cmd/otf-mcp/go.mod cmd/otf-mcp/go.sum
 
       - name: Build
         run: go build ./...

@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'cmd/*/v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Determine module and version
+        id: module
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == cmd/*/v* ]]; then
+            MODULE="${TAG%/*}"
+            MODULE="${MODULE#*/}"
+            VERSION="${TAG##*/v}"
+            echo "name=$MODULE" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "dir=cmd/$MODULE" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=sdk" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build SDK
+        if: steps.module.outputs.name == 'sdk'
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+
+      - name: Build CLI binaries
+        if: steps.module.outputs.name == 'otf-cli'
+        run: |
+          mkdir -p dist
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              binary="otf-cli-${os}-${arch}"
+              GOOS=$os GOARCH=$arch go build -o "dist/$binary" ./cmd/otf-cli/
+            done
+          done
+
+      - name: Build MCP binaries
+        if: steps.module.outputs.name == 'otf-mcp'
+        run: |
+          mkdir -p dist
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              binary="otf-mcp-${os}-${arch}"
+              GOOS=$os GOARCH=$arch go build -o "dist/$binary" ./cmd/otf-mcp/
+            done
+          done
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          NAME="${{ steps.module.outputs.name }}"
+          VER="${{ steps.module.outputs.version }}"
+          if [[ "$NAME" == "sdk" ]]; then
+            TITLE="otf_api v$VER"
+            NOTES="## otf_api v$VER\n\nGo SDK for the OrangeTheory Fitness API."
+          else
+            TITLE="${NAME} v$VER"
+            NOTES="## ${NAME} v$VER\n\nSee the [otf_api release notes](https://github.com/ammiranda/otf_api/releases) for SDK changes."
+          fi
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.notes.outputs.title }}
+          body: ${{ steps.notes.outputs.notes }}
+          files: dist/*
