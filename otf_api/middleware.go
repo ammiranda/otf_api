@@ -2,6 +2,7 @@ package otf_api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -59,7 +60,9 @@ func AuthMiddleware(c *Client) Middleware {
 
 			if res.StatusCode == http.StatusUnauthorized && c.RefreshToken != "" {
 				if req.Body == nil || req.GetBody != nil {
-					res.Body.Close()
+					if err := res.Body.Close(); err != nil {
+					log.Printf("error closing response body: %v", err)
+				}
 
 					if refreshErr := c.RefreshAuth(req.Context()); refreshErr != nil {
 						return nil, fmt.Errorf("token refresh failed: %w", refreshErr)

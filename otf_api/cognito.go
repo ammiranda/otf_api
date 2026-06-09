@@ -135,7 +135,11 @@ func (a *cognitoAuthenticator) RefreshAuth(ctx context.Context, refreshToken str
 	if err != nil {
 		return nil, fmt.Errorf("error refreshing auth: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			log.Printf("error closing response body: %v", err)
+		}
+	}()
 
 	parsedResp := cognitoInitiateAuthResponse{}
 	if err := json.NewDecoder(res.Body).Decode(&parsedResp); err != nil {

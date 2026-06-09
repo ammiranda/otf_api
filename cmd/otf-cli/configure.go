@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/ammiranda/otf_api/otf_api"
 	"github.com/spf13/cobra"
 )
 
@@ -137,7 +138,7 @@ Examples:
 			config, err := loadConfig()
 			if err != nil {
 				log.Printf("Warning: Could not load config: %v", err)
-				config = CLIConfig{}
+				config = otf_api.CLIConfig{}
 			}
 			config.PreferredStudioIDs = ids
 			if err := saveConfig(config); err != nil {
@@ -179,7 +180,7 @@ Examples:
 
 			config, err := loadConfig()
 			if err != nil {
-				config = CLIConfig{}
+				config = otf_api.CLIConfig{}
 			}
 			config.PreferredStudioIDs = selectedStudioIDs
 			if err := saveConfig(config); err != nil {
@@ -210,7 +211,7 @@ Examples:
 		config, err := loadConfig()
 		if err != nil {
 			log.Printf("Warning: Could not load existing config, will create a new one: %v", err)
-			config = CLIConfig{}
+			config = otf_api.CLIConfig{}
 		}
 
 		if cmd.Flags().Changed("timezone") {

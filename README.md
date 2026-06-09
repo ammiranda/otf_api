@@ -44,10 +44,24 @@ $ otf-cli schedules
 
 ### 1. Install
 
+**Go (requires Go 1.26+):**
 ```bash
 go install github.com/ammiranda/otf_api/cmd/otf-cli@latest
-# or build from source:
-# git clone https://github.com/ammiranda/otf_api.git && cd otf_api && make build-cli
+go install github.com/ammiranda/otf_api/cmd/otf-mcp@latest
+```
+
+**Homebrew (tap):** (requires [`ammiranda/homebrew-tap`](https://github.com/ammiranda/homebrew-tap))
+```bash
+brew install ammiranda/tap/otf-cli
+brew install ammiranda/tap/otf-mcp
+```
+
+**Build from source:**
+```bash
+git clone https://github.com/ammiranda/otf_api.git
+cd otf_api
+make build-cli    # produces bin/otf-cli
+make build-mcp    # produces bin/otf-mcp
 ```
 
 ### 2. Configure credentials
@@ -196,12 +210,15 @@ func main() {
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OTF_USERNAME` | Yes | — | Your OTF account email |
-| `OTF_PASSWORD` | Yes | — | Your OTF account password |
-| `OTF_CLIENT_ID` | Yes | — | Cognito app client ID |
+| `OTF_USERNAME` | No* | — | Your OTF account email |
+| `OTF_PASSWORD` | No* | — | Your OTF account password |
+| `OTF_CLIENT_ID` | No | `65knvqta6p37efc2l3eh26pl5o` | Cognito app client ID (iOS app) |
 | `OTF_API_IO_BASE_URL` | No | `https://api.orangetheory.io/v1/` | Classes & bookings API |
 | `OTF_API_CO_BASE_URL` | No | `https://api.orangetheory.co/mobile/v1/` | Studios API |
 | `OTF_AUTH_URL` | No | `https://cognito-idp.us-east-1.amazonaws.com/` | Cognito auth endpoint |
+
+\* Credentials only needed on first run; tokens are cached to `~/.config/otf-cli/config.json`
+  (macOS Keychain is used automatically when available).
 
 ## How It Works
 
@@ -220,6 +237,7 @@ The SDK handles:
 - **Token caching** — avoids re-login on every command
 - **Automatic token refresh** on 401 responses
 - **Gzip decoding** for API responses
+- **macOS Keychain** — tokens are stored in the system keychain when available, falling back to `~/.config/otf-cli/config.json`
 
 ## Project Structure
 

@@ -10,6 +10,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// DefaultClientID is the Cognito App Client ID extracted from the
+// OrangeTheory iOS app. Used for authentication if OTF_CLIENT_ID
+// is not set.
+const DefaultClientID = "65knvqta6p37efc2l3eh26pl5o"
+
 type Client struct {
 	BaseIOURL    string
 	BaseCOURL    string
@@ -38,7 +43,10 @@ func NewClient() (*Client, error) {
 	baseIOURL := getEnvVar("OTF_API_IO_BASE_URL")
 	baseCOURL := getEnvVar("OTF_API_CO_BASE_URL")
 	authURL := getEnvVar("OTF_AUTH_URL")
-	clientID := getEnvVar("OTF_CLIENT_ID")
+	clientID := os.Getenv("OTF_CLIENT_ID")
+	if clientID == "" {
+		clientID = DefaultClientID
+	}
 
 	if baseIOURL == "" || baseCOURL == "" || authURL == "" {
 		return nil, fmt.Errorf("base urls not configured correctly")

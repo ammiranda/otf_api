@@ -25,13 +25,15 @@ func TestCognitoAuthenticator_Authenticate_Success(t *testing.T) {
 		assert.Equal(t, "test-client-id", req["ClientId"])
 
 		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-		json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
+			if err := json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
 			AuthenticationResult: cognitoAuthResult{
 				IDToken:      "test-id-token",
 				RefreshToken: "test-refresh-token",
 				ExpiresIn:    3600,
 			},
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
@@ -49,9 +51,11 @@ func TestCognitoAuthenticator_Authenticate_Success(t *testing.T) {
 func TestCognitoAuthenticator_Authenticate_MissingToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-		json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
+		if err := json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
 			AuthenticationResult: cognitoAuthResult{},
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
@@ -66,10 +70,12 @@ func TestCognitoAuthenticator_Authenticate_MissingToken(t *testing.T) {
 func TestCognitoAuthenticator_Authenticate_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"__type":  "NotAuthorizedException",
 			"message": "Incorrect username or password",
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
@@ -92,12 +98,14 @@ func TestCognitoAuthenticator_RefreshAuth_Success(t *testing.T) {
 		assert.Equal(t, "test-refresh-token", params["REFRESH_TOKEN"])
 
 		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-		json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
+		if err := json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
 			AuthenticationResult: cognitoAuthResult{
 				IDToken:   "new-id-token",
 				ExpiresIn: 3600,
 			},
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
@@ -111,10 +119,12 @@ func TestCognitoAuthenticator_RefreshAuth_Success(t *testing.T) {
 func TestCognitoAuthenticator_RefreshAuth_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"__type":  "InvalidParameterException",
 			"message": "Refresh Token has been revoked",
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
@@ -134,12 +144,14 @@ func TestCognitoAuthenticator_CredentialsArePassed(t *testing.T) {
 		assert.Equal(t, "custom-pass", params["PASSWORD"])
 
 		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-		json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
+		if err := json.NewEncoder(w).Encode(cognitoInitiateAuthResponse{
 			AuthenticationResult: cognitoAuthResult{
 				IDToken:   "token",
 				ExpiresIn: 3600,
 			},
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 

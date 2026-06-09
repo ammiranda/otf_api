@@ -1,0 +1,43 @@
+version: 2
+
+project_name: otf-cli
+
+builds:
+  - id: otf-cli
+    main: ./cmd/otf-cli/
+    binary: otf-cli
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    env: [CGO_ENABLED=0]
+
+archives:
+  - id: otf-cli
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+
+checksum:
+  name_template: "sha256sums.txt"
+  algorithm: sha256
+
+homebrew_casks:
+  - name: otf-cli
+    repository:
+      owner: ammiranda
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    commit_author:
+      name: goreleaser
+      email: goreleaser@localhost
+    binaries:
+      - otf-cli
+    homepage: "https://github.com/ammiranda/otf_api"
+    description: "CLI for the OrangeTheory Fitness API — browse, book, and manage OTF classes"
+    license: "MIT"
+
+release:
+  github:
+    owner: ammiranda
+    name: otf_api
+  header: "{{ .ProjectName }} v{{ .Version }}"
+  prerelease: auto
