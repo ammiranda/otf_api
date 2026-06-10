@@ -20,7 +20,7 @@ type CLIConfig struct {
 	RefreshToken       string   `json:"refresh_token,omitempty"`
 }
 
-func GetConfigPath() (string, error) {
+var GetConfigPath = func() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user config directory: %w", err)

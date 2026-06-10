@@ -9,11 +9,11 @@ import (
 
 const keychainService = "otf-cli"
 
-func keychainAvailable() bool {
+var keychainAvailable = func() bool {
 	return runtime.GOOS == "darwin"
 }
 
-func keychainSet(key, value string) error {
+var keychainSet = func(key, value string) error {
 	if !keychainAvailable() {
 		return fmt.Errorf("keychain not available on %s", runtime.GOOS)
 	}
@@ -29,7 +29,7 @@ func keychainSet(key, value string) error {
 	return nil
 }
 
-func keychainGet(key string) (string, error) {
+var keychainGet = func(key string) (string, error) {
 	if !keychainAvailable() {
 		return "", fmt.Errorf("keychain not available on %s", runtime.GOOS)
 	}
