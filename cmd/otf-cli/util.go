@@ -74,7 +74,7 @@ func padOrTruncate(s string, width int) string {
 	return s
 }
 
-func formatTime(t time.Time, config CLIConfig) string {
+func formatTime(t time.Time, config otf_api.CLIConfig) string {
 	if config.Timezone == "" {
 		return t.Format("3:04 PM MST")
 	}

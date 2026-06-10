@@ -77,7 +77,7 @@ Examples:
 		config, err := loadConfig()
 		if err != nil {
 			log.Printf("Warning: Could not load configuration: %v", err)
-			config = CLIConfig{}
+			config = otf_api.CLIConfig{}
 		}
 
 		classOptions := []string{}

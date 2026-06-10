@@ -136,7 +136,11 @@ func (c *Client) BookClass(
 			if err != nil {
 				return fmt.Errorf("booking request failed with status code: %d, failed to create gzip reader: %w", res.StatusCode, err)
 			}
-			defer gzipReader.Close()
+			defer func() {
+			if err := gzipReader.Close(); err != nil {
+				log.Printf("error closing gzip reader: %v", err)
+			}
+		}()
 			reader = gzipReader
 		}
 		

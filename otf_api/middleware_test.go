@@ -9,65 +9,86 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestAuthMiddleware_SetsHeaders(t *testing.T) {
-	c := &Client{
-		Token:      "test-token",
-		HTTPClient: &http.Client{},
-	}
-	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
-	_, err := c.HTTPClient.Do(req)
-	require.NoError(t, err)
+type MiddlewareSuite struct {
+	suite.Suite
+	server *httptest.Server
 }
 
-func TestAuthMiddleware_ReadsTokenDynamically(t *testing.T) {
-	c := &Client{
-		Token:      "initial-token",
+func (s *MiddlewareSuite) TearDownTest() {
+	if s.server != nil {
+		s.server.Close()
+		s.server = nil
+	}
+}
+
+func (s *MiddlewareSuite) newServer(handler http.HandlerFunc) {
+	if s.server != nil {
+		s.server.Close()
+	}
+	s.server = httptest.NewServer(http.HandlerFunc(handler))
+}
+
+func (s *MiddlewareSuite) client() *Client {
+	return &Client{
 		HTTPClient: &http.Client{},
 	}
-	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+}
 
+func (s *MiddlewareSuite) clientWithToken(token string) *Client {
+	c := s.client()
+	c.Token = token
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+	return c
+}
+
+func (s *MiddlewareSuite) TestSetsHeaders() {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(s.T(), "Bearer test-token", r.Header.Get("Authorization"))
+		assert.Equal(s.T(), "application/json", r.Header.Get("Content-Type"))
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := s.clientWithToken("test-token")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	_, err := c.HTTPClient.Do(req)
+	s.NoError(err)
+}
+
+func (s *MiddlewareSuite) TestReadsTokenDynamically() {
 	var capturedToken string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
 		capturedToken = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	})
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	c := s.clientWithToken("initial-token")
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
 	_, err := c.HTTPClient.Do(req)
-	require.NoError(t, err)
-	assert.Equal(t, "Bearer initial-token", capturedToken)
+	s.NoError(err)
+	s.Equal("Bearer initial-token", capturedToken)
 
 	c.Token = "updated-token"
 
-	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
 	_, err = c.HTTPClient.Do(req2)
-	require.NoError(t, err)
-	assert.Equal(t, "Bearer updated-token", capturedToken)
+	s.NoError(err)
+	s.Equal("Bearer updated-token", capturedToken)
 }
 
-func TestAuthMiddleware_RetriesOn401WithRefresh(t *testing.T) {
+func (s *MiddlewareSuite) TestRetriesOn401WithRefresh() {
 	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
 		if requestCount == 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	})
 
 	c := &Client{
 		RefreshToken: "valid-refresh",
@@ -78,48 +99,39 @@ func TestAuthMiddleware_RetriesOn401WithRefresh(t *testing.T) {
 		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
 			c.Token = "refreshed-token"
 			c.TokenExpiry = time.Now().Add(1 * time.Hour)
-			return &AuthResult{
-				Token:     "refreshed-token",
-				ExpiresIn: 3600 * time.Second,
-			}, nil
+			return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
 		},
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
 	res, err := c.HTTPClient.Do(req)
-	require.NoError(t, err)
-	assert.Equal(t, 2, requestCount)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, "refreshed-token", c.Token)
+	s.NoError(err)
+	s.Equal(2, requestCount)
+	s.Equal(http.StatusOK, res.StatusCode)
+	s.Equal("refreshed-token", c.Token)
 }
 
-func TestAuthMiddleware_DoesNotRetryOn401WithoutRefreshToken(t *testing.T) {
+func (s *MiddlewareSuite) TestDoesNotRetryOn401WithoutRefreshToken() {
 	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
 		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
+	})
 
-	c := &Client{
-		Token:      "expired-token",
-		HTTPClient: &http.Client{},
-	}
-	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+	c := s.clientWithToken("expired-token")
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
 	res, err := c.HTTPClient.Do(req)
-	require.NoError(t, err)
-	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+	s.NoError(err)
+	s.Equal(1, requestCount)
+	s.Equal(http.StatusUnauthorized, res.StatusCode)
 }
 
-func TestAuthMiddleware_FailedRefreshStillReturnsError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (s *MiddlewareSuite) TestFailedRefreshStillReturnsError() {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
+	})
 
 	c := &Client{
 		RefreshToken: "bad-refresh",
@@ -132,9 +144,9 @@ func TestAuthMiddleware_FailedRefreshStillReturnsError(t *testing.T) {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
 	_, err := c.HTTPClient.Do(req)
-	require.Error(t, err)
+	s.Error(err)
 }
 
 func TestAddHeader(t *testing.T) {
@@ -150,4 +162,8 @@ func TestAddHeader(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 	_, err := c.Do(req)
 	require.NoError(t, err)
+}
+
+func TestMiddlewareSuite(t *testing.T) {
+	suite.Run(t, new(MiddlewareSuite))
 }

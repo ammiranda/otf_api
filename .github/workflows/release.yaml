@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -31,11 +33,9 @@ jobs:
             VERSION="${TAG##*/v}"
             echo "name=$MODULE" >> "$GITHUB_OUTPUT"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "dir=cmd/$MODULE" >> "$GITHUB_OUTPUT"
           else
             echo "name=sdk" >> "$GITHUB_OUTPUT"
             echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-            echo "dir=." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build SDK
@@ -44,46 +44,37 @@ jobs:
           go test -count=1 ./...
           go vet ./...
 
-      - name: Build CLI binaries
-        if: steps.module.outputs.name == 'otf-cli'
-        run: |
-          mkdir -p dist
-          for os in darwin linux; do
-            for arch in amd64 arm64; do
-              binary="otf-cli-${os}-${arch}"
-              GOOS=$os GOARCH=$arch go build -o "dist/$binary" ./cmd/otf-cli/
-            done
-          done
+      - name: Install GoReleaser
+        if: steps.module.outputs.name != 'sdk'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
 
-      - name: Build MCP binaries
+      - name: Release CLI
+        if: steps.module.outputs.name == 'otf-cli'
+        run: goreleaser release --config .goreleaser/cli.yaml --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Release MCP
         if: steps.module.outputs.name == 'otf-mcp'
-        run: |
-          mkdir -p dist
-          for os in darwin linux; do
-            for arch in amd64 arm64; do
-              binary="otf-mcp-${os}-${arch}"
-              GOOS=$os GOARCH=$arch go build -o "dist/$binary" ./cmd/otf-mcp/
-            done
-          done
+        run: goreleaser release --config .goreleaser/mcp.yaml --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Generate release notes
+        if: steps.module.outputs.name == 'sdk'
         id: notes
         run: |
-          NAME="${{ steps.module.outputs.name }}"
           VER="${{ steps.module.outputs.version }}"
-          if [[ "$NAME" == "sdk" ]]; then
-            TITLE="otf_api v$VER"
-            NOTES="## otf_api v$VER\n\nGo SDK for the OrangeTheory Fitness API."
-          else
-            TITLE="${NAME} v$VER"
-            NOTES="## ${NAME} v$VER\n\nSee the [otf_api release notes](https://github.com/ammiranda/otf_api/releases) for SDK changes."
-          fi
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
+          echo "title=otf_api v$VER" >> "$GITHUB_OUTPUT"
+          echo "notes=## otf_api v$VER\n\nGo SDK for the OrangeTheory Fitness API." >> "$GITHUB_OUTPUT"
 
       - name: Create Release
+        if: steps.module.outputs.name == 'sdk'
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.notes.outputs.title }}
           body: ${{ steps.notes.outputs.notes }}
-          files: dist/*

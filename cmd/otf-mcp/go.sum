@@ -1,3 +1,5 @@
+github.com/ammiranda/otf_api v0.1.0 h1:ArytJLTrKZMGwpotYwfVxRL5e2ZfhrOgdx/qoK6ZJfo=
+github.com/ammiranda/otf_api v0.1.0/go.mod h1:62d13/9bXVZAZ36w0v2RUYnvZZPDuRiZM5ymb8YI4l4=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=

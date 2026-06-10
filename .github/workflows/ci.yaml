@@ -29,8 +29,31 @@ jobs:
           (cd cmd/otf-mcp && go mod tidy)
           git diff --exit-code -- go.mod go.sum cmd/otf-cli/go.mod cmd/otf-cli/go.sum cmd/otf-mcp/go.mod cmd/otf-mcp/go.sum
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
       - name: Build
         run: go build ./...
 
       - name: Test
+        run: go test -v -count=1 ./...
+
+  macos-test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (unit + keychain integration)
         run: go test -v -count=1 ./...
