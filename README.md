@@ -5,7 +5,8 @@
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://golang.org)
 [![Go Reference](https://pkg.go.dev/badge/github.com/ammiranda/otf_api.svg)](https://pkg.go.dev/github.com/ammiranda/otf_api)
 [![CI](https://github.com/ammiranda/otf_api/actions/workflows/ci.yaml/badge.svg)](https://github.com/ammiranda/otf_api/actions/workflows/ci.yaml)
-[![Install](https://img.shields.io/badge/go%20install-otf--cli-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-cli)
+[![Install CLI](https://img.shields.io/badge/go%20install-otf--cli-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-cli)
+[![Install MCP](https://img.shields.io/badge/go%20install-otf--mcp-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-mcp)
 
 ## What is this?
 
