@@ -44,22 +44,22 @@ jobs:
           go test -count=1 ./...
           go vet ./...
 
-      - name: Install GoReleaser
-        if: steps.module.outputs.name != 'sdk'
+      - name: Release CLI
+        if: steps.module.outputs.name == 'otf-cli'
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-
-      - name: Release CLI
-        if: steps.module.outputs.name == 'otf-cli'
-        run: goreleaser release --config .goreleaser/cli.yaml --clean
+          args: release --config .goreleaser/cli.yaml --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Release MCP
         if: steps.module.outputs.name == 'otf-mcp'
-        run: goreleaser release --config .goreleaser/mcp.yaml --clean
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --config .goreleaser/mcp.yaml --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
