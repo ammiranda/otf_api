@@ -2,6 +2,7 @@ package otf_api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,26 +64,59 @@ func saveToFile(config CLIConfig) error {
 }
 
 func LoadConfig() (CLIConfig, error) {
-	config, _ := loadFromFile()
+	config, fileErr := loadFromFile()
+	hasKeychain := keychainAvailable()
 
-	if keychainAvailable() {
-		if token, err := keychainGet("token"); err == nil && token != "" {
-			config.Token = token
-		}
-		if refresh, err := keychainGet("refresh_token"); err == nil && refresh != "" {
-			config.RefreshToken = refresh
-		}
-		if tz, err := keychainGet("timezone"); err == nil && tz != "" {
-			config.Timezone = tz
-		}
-		if raw, err := keychainGet("preferred_studio_ids"); err == nil && raw != "" {
-			var ids []string
-			if err := json.Unmarshal([]byte(raw), &ids); err == nil {
-				config.PreferredStudioIDs = ids
-			}
+	if fileErr != nil && !hasKeychain {
+		return config, fileErr
+	}
+
+	if hasKeychain {
+		kcConfig, err := loadFromKeychain()
+		if err == nil {
+			config = kcConfig
 		}
 	}
 
+	return config, nil
+}
+
+func loadFromKeychain() (CLIConfig, error) {
+	var config CLIConfig
+	var errs []error
+
+	if token, err := keychainGet("token"); err != nil {
+		errs = append(errs, err)
+	} else {
+		config.Token = token
+	}
+
+	if refresh, err := keychainGet("refresh_token"); err != nil {
+		errs = append(errs, err)
+	} else {
+		config.RefreshToken = refresh
+	}
+
+	if tz, err := keychainGet("timezone"); err != nil {
+		errs = append(errs, err)
+	} else {
+		config.Timezone = tz
+	}
+
+	if raw, err := keychainGet("preferred_studio_ids"); err != nil {
+		errs = append(errs, err)
+	} else if raw != "" {
+		var ids []string
+		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+			errs = append(errs, err)
+		} else {
+			config.PreferredStudioIDs = ids
+		}
+	}
+
+	if len(errs) > 0 {
+		return config, fmt.Errorf("keychain: %w", errors.Join(errs...))
+	}
 	return config, nil
 }
 
