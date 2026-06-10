@@ -81,6 +81,13 @@ func (s *ConfigSuite) TestLoadFromFile_NotExist() {
 	s.Empty(cfg.Token)
 }
 
+func (s *ConfigSuite) TestLoadFromFile_ReadError() {
+	s.Require().NoError(os.MkdirAll(s.configPath, 0755))
+	_, err := loadFromFile()
+	s.Require().Error(err)
+	s.Contains(err.Error(), "reading")
+}
+
 func (s *ConfigSuite) TestLoadFromFile_InvalidJSON() {
 	s.Require().NoError(os.WriteFile(s.configPath, []byte("not json"), 0600))
 	_, err := loadFromFile()
@@ -245,11 +252,47 @@ func (s *ConfigSuite) TestStoreInKeychain_PreferredStudioIDs() {
 	s.Equal(`["s1","s2"]`, capturedValue)
 }
 
-func (s *ConfigSuite) TestStoreInKeychain_Error() {
+func (s *ConfigSuite) TestStoreInKeychain_TokenError() {
 	keychainSet = func(k, v string) error { return errors.New("keychain error") }
 	err := storeInKeychain(CLIConfig{Token: "t"})
 	s.Error(err)
 	s.Contains(err.Error(), "keychain token")
+}
+
+func (s *ConfigSuite) TestStoreInKeychain_RefreshTokenError() {
+	keychainSet = func(k, v string) error {
+		if k == "refresh_token" {
+			return errors.New("refresh error")
+		}
+		return nil
+	}
+	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r"})
+	s.Error(err)
+	s.Contains(err.Error(), "keychain refresh_token")
+}
+
+func (s *ConfigSuite) TestStoreInKeychain_TimezoneError() {
+	keychainSet = func(k, v string) error {
+		if k == "timezone" {
+			return errors.New("tz error")
+		}
+		return nil
+	}
+	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z"})
+	s.Error(err)
+	s.Contains(err.Error(), "keychain timezone")
+}
+
+func (s *ConfigSuite) TestStoreInKeychain_StudioIDsError() {
+	keychainSet = func(k, v string) error {
+		if k == "preferred_studio_ids" {
+			return errors.New("ids error")
+		}
+		return nil
+	}
+	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z", PreferredStudioIDs: []string{"s1"}})
+	s.Error(err)
+	s.Contains(err.Error(), "keychain preferred_studio_ids")
 }
 
 func (s *ConfigSuite) TestLoadFromKeychain() {

@@ -56,10 +56,7 @@ func saveToFile(config CLIConfig) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
-	}
+	data, _ := json.MarshalIndent(config, "", "  ")
 	return os.WriteFile(path, data, 0600)
 }
 
@@ -147,10 +144,7 @@ func storeInKeychain(config CLIConfig) error {
 		}
 	}
 	if len(config.PreferredStudioIDs) > 0 {
-		idsJSON, err := json.Marshal(config.PreferredStudioIDs)
-		if err != nil {
-			return fmt.Errorf("marshaling studio IDs: %w", err)
-		}
+		idsJSON, _ := json.Marshal(config.PreferredStudioIDs)
 		if err := keychainSet("preferred_studio_ids", string(idsJSON)); err != nil {
 			return fmt.Errorf("keychain preferred_studio_ids: %w", err)
 		}
