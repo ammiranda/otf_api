@@ -56,6 +56,8 @@ brew install ammiranda/tap/otf-cli
 brew install ammiranda/tap/otf-mcp
 ```
 
+> **macOS Gatekeeper:** binaries are not signed with an Apple Developer ID, so macOS may flag them as unidentified. Run `xattr -d com.apple.quarantine $(which otf-mcp)` (or `otf-cli`) to remove the quarantine attribute. Alternatively, right-click the binary in Finder and select **Open** the first time.
+
 **Build from source:**
 ```bash
 git clone https://github.com/ammiranda/otf_api.git
