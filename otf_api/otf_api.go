@@ -2,12 +2,9 @@ package otf_api
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 // DefaultClientID is the Cognito App Client ID extracted from the
@@ -28,28 +25,19 @@ type Client struct {
 	authenticator Authenticator
 }
 
-func getEnvVar(key string) string {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return os.Getenv(key)
-}
-
 // NewClient constructor that creates and returns a new instance
 // of the OTF API client with a Cognito authenticator by default.
 func NewClient() (*Client, error) {
-	baseIOURL := getEnvVar("OTF_API_IO_BASE_URL")
-	baseCOURL := getEnvVar("OTF_API_CO_BASE_URL")
-	authURL := getEnvVar("OTF_AUTH_URL")
+	baseIOURL := os.Getenv("OTF_API_IO_BASE_URL")
+	baseCOURL := os.Getenv("OTF_API_CO_BASE_URL")
+	authURL := os.Getenv("OTF_AUTH_URL")
 	clientID := os.Getenv("OTF_CLIENT_ID")
 	if clientID == "" {
 		clientID = DefaultClientID
 	}
 
 	if baseIOURL == "" || baseCOURL == "" || authURL == "" {
-		return nil, fmt.Errorf("base urls not configured correctly")
+		return nil, fmt.Errorf("missing required env vars: OTF_API_IO_BASE_URL=%q OTF_API_CO_BASE_URL=%q OTF_AUTH_URL=%q", baseIOURL, baseCOURL, authURL)
 	}
 
 	c := &Client{
