@@ -45,4 +45,19 @@ var keychainGet = func(key string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+var keychainDel = func(key string) error {
+	if !keychainAvailable() {
+		return fmt.Errorf("keychain not available on %s", runtime.GOOS)
+	}
+	cmd := exec.Command("security", "delete-generic-password",
+		"-a", keychainService,
+		"-s", key,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("security delete-generic-password failed: %w\n%s", err, out)
+	}
+	return nil
+}
+
 
