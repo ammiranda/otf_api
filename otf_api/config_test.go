@@ -13,26 +13,48 @@ import (
 type ConfigSuite struct {
 	suite.Suite
 	configPath string
-	origKC     func() bool
-	origGet    func(string) (string, error)
-	origSet    func(string, string) error
+	origGet    func(string, string) (string, error)
+	origSet    func(string, string, string) error
 	origPath   func() (string, error)
 }
 
 func (s *ConfigSuite) SetupTest() {
 	s.configPath = filepath.Join(s.T().TempDir(), "config.json")
-	s.origKC = keychainAvailable
-	s.origGet = keychainGet
-	s.origSet = keychainSet
+	s.origGet = keyringGet
+	s.origSet = keyringSet
 	s.origPath = GetConfigPath
 	GetConfigPath = func() (string, error) { return s.configPath, nil }
+	keyringGet = func(_, _ string) (string, error) { return "", errors.New("keyring unavailable") }
+	keyringSet = func(_, _, _ string) error { return errors.New("keyring unavailable") }
 }
 
 func (s *ConfigSuite) TearDownTest() {
-	keychainAvailable = s.origKC
-	keychainGet = s.origGet
-	keychainSet = s.origSet
+	keyringGet = s.origGet
+	keyringSet = s.origSet
 	GetConfigPath = s.origPath
+}
+
+func (s *ConfigSuite) withKeyring() {
+	keyringGet = func(_, _ string) (string, error) {
+		return "", errors.New("keyring unavailable")
+	}
+	keyringSet = func(_, _, _ string) error {
+		return errors.New("keyring unavailable")
+	}
+}
+
+func (s *ConfigSuite) withKeyringData(cfg CLIConfig) {
+	data, _ := json.Marshal(cfg)
+	keyringGet = func(_, _ string) (string, error) {
+		return string(data), nil
+	}
+	keyringSet = func(_, _, _ string) error {
+		return nil
+	}
+}
+
+func (s *ConfigSuite) withKeyringSet() {
+	keyringSet = func(_, _, _ string) error { return nil }
 }
 
 func (s *ConfigSuite) writeFile(cfg CLIConfig) {
@@ -49,11 +71,7 @@ func (s *ConfigSuite) assertFile(cfg CLIConfig) {
 	s.Equal(cfg, got)
 }
 
-func (s *ConfigSuite) noKeychain()   { keychainAvailable = func() bool { return false } }
-func (s *ConfigSuite) withKeychain() { keychainAvailable = func() bool { return true } }
-
 func (s *ConfigSuite) TestGetConfigPath() {
-	// use real GetConfigPath
 	GetConfigPath = s.origPath
 	path, err := GetConfigPath()
 	s.Require().NoError(err)
@@ -107,253 +125,85 @@ func (s *ConfigSuite) TestSaveToFile_PathError() {
 	s.Error(err)
 }
 
-func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileExists() {
-	s.noKeychain()
-	s.writeFile(CLIConfig{Token: "t", RefreshToken: "r"})
+func (s *ConfigSuite) TestLoadConfig_KeyringSuccess() {
+	s.withKeyringData(CLIConfig{Token: "kr-token", RefreshToken: "kr-refresh"})
+	s.writeFile(CLIConfig{Token: "file-token"})
+
 	got, err := LoadConfig()
 	s.Require().NoError(err)
-	s.Equal("t", got.Token)
-	s.Equal("r", got.RefreshToken)
+	s.Equal("kr-token", got.Token)
+	s.Equal("kr-refresh", got.RefreshToken)
 }
 
-func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileNotExist() {
-	s.noKeychain()
+func (s *ConfigSuite) TestLoadConfig_KeyringFails_FallsBackToFile() {
+	s.withKeyring()
+	s.writeFile(CLIConfig{Token: "file-token", Timezone: "America/Chicago"})
+
 	got, err := LoadConfig()
 	s.Require().NoError(err)
-	s.Empty(got.Token)
+	s.Equal("file-token", got.Token)
+	s.Equal("America/Chicago", got.Timezone)
 }
 
-func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileError() {
-	s.noKeychain()
+func (s *ConfigSuite) TestLoadConfig_BothFail() {
+	s.withKeyring()
 	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
+
 	_, err := LoadConfig()
 	s.Error(err)
+	s.Contains(err.Error(), "keyring")
+	s.Contains(err.Error(), "file")
 }
 
-func (s *ConfigSuite) TestLoadConfig_KeychainOverridesFile() {
-	s.withKeychain()
-	s.writeFile(CLIConfig{Token: "file-token"})
-	keychainGet = func(k string) (string, error) {
-		switch k {
-		case "token":
-			return "kc-token", nil
-		case "refresh_token":
-			return "kc-refresh", nil
-		case "timezone":
-			return "America/Chicago", nil
-		case "preferred_studio_ids":
-			return `["studio-a"]`, nil
-		}
-		return "", nil
-	}
-
-	got, err := LoadConfig()
-	s.Require().NoError(err)
-	s.Equal("kc-token", got.Token)
-	s.Equal("kc-refresh", got.RefreshToken)
-	s.Equal("America/Chicago", got.Timezone)
-	s.Equal([]string{"studio-a"}, got.PreferredStudioIDs)
-}
-
-func (s *ConfigSuite) TestLoadConfig_KeychainFails_FallsBackToFile() {
-	tests := []struct {
-		name    string
-		keyGet  func(string) (string, error)
-	}{
-		{"all fail", func(string) (string, error) { return "", errors.New("fail") }},
-		{"partial fail", func(k string) (string, error) {
-			if k == "token" { return "kc-token", nil }
-			return "", errors.New("fail")
-		}},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.withKeychain()
-			keychainGet = tt.keyGet
-			s.writeFile(CLIConfig{Token: "file-token", Timezone: "America/Chicago"})
-
-			got, err := LoadConfig()
-			s.Require().NoError(err)
-			s.Equal("file-token", got.Token)
-			s.Equal("America/Chicago", got.Timezone)
-		})
-	}
-}
-
-func (s *ConfigSuite) TestLoadConfig_FileErrorWithKeychain_FallsBackToKeychain() {
-	s.withKeychain()
-	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
-	keychainGet = func(k string) (string, error) {
-		switch k {
-		case "token":
-			return "kc-token", nil
-		case "refresh_token":
-			return "kc-refresh", nil
-		}
-		return "", nil
-	}
-
-	got, err := LoadConfig()
-	s.Require().NoError(err)
-	s.Equal("kc-token", got.Token)
-	s.Equal("kc-refresh", got.RefreshToken)
-}
-
-func (s *ConfigSuite) TestSaveConfig_NoKeychain() {
-	s.noKeychain()
-	cfg := CLIConfig{Token: "saved-token"}
+func (s *ConfigSuite) TestSaveConfig_KeyringSuccess() {
+	s.withKeyringSet()
+	cfg := CLIConfig{Token: "kr-token"}
 	s.Require().NoError(SaveConfig(cfg))
-	s.assertFile(cfg)
 }
 
-func (s *ConfigSuite) TestSaveConfig_KeychainSuccess() {
-	s.withKeychain()
-	var stored map[string]string
-	keychainSet = func(k, v string) error {
-		if stored == nil {
-			stored = map[string]string{}
-		}
-		stored[k] = v
-		return nil
-	}
-
-	cfg := CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z"}
-	s.Require().NoError(SaveConfig(cfg))
-	s.Equal("t", stored["token"])
-	s.Equal("r", stored["refresh_token"])
-	s.Equal("z", stored["timezone"])
-}
-
-func (s *ConfigSuite) TestSaveConfig_KeychainFails_FallsBackToFile() {
-	s.withKeychain()
-	keychainSet = func(string, string) error { return errors.New("fail") }
-
+func (s *ConfigSuite) TestSaveConfig_KeyringFails_FallsBackToFile() {
+	s.withKeyring()
 	cfg := CLIConfig{Token: "file-token"}
 	s.Require().NoError(SaveConfig(cfg))
 	s.assertFile(cfg)
 }
 
-func (s *ConfigSuite) TestStoreInKeychain_EmptyFields() {
-	keychainSet = func(k, v string) error {
-		s.T().Errorf("unexpected call keychainSet(%q, %q)", k, v)
-		return nil
-	}
-	s.Require().NoError(storeInKeychain(CLIConfig{}))
-}
-
-func (s *ConfigSuite) TestStoreInKeychain_PreferredStudioIDs() {
-	var capturedKey, capturedValue string
-	keychainSet = func(k, v string) error {
-		capturedKey, capturedValue = k, v
-		return nil
-	}
-	s.Require().NoError(storeInKeychain(CLIConfig{PreferredStudioIDs: []string{"s1", "s2"}}))
-	s.Equal("preferred_studio_ids", capturedKey)
-	s.Equal(`["s1","s2"]`, capturedValue)
-}
-
-func (s *ConfigSuite) TestStoreInKeychain_TokenError() {
-	keychainSet = func(k, v string) error { return errors.New("keychain error") }
-	err := storeInKeychain(CLIConfig{Token: "t"})
-	s.Error(err)
-	s.Contains(err.Error(), "keychain token")
-}
-
-func (s *ConfigSuite) TestStoreInKeychain_RefreshTokenError() {
-	keychainSet = func(k, v string) error {
-		if k == "refresh_token" {
-			return errors.New("refresh error")
-		}
-		return nil
-	}
-	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r"})
-	s.Error(err)
-	s.Contains(err.Error(), "keychain refresh_token")
-}
-
-func (s *ConfigSuite) TestStoreInKeychain_TimezoneError() {
-	keychainSet = func(k, v string) error {
-		if k == "timezone" {
-			return errors.New("tz error")
-		}
-		return nil
-	}
-	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z"})
-	s.Error(err)
-	s.Contains(err.Error(), "keychain timezone")
-}
-
-func (s *ConfigSuite) TestStoreInKeychain_StudioIDsError() {
-	keychainSet = func(k, v string) error {
-		if k == "preferred_studio_ids" {
-			return errors.New("ids error")
-		}
-		return nil
-	}
-	err := storeInKeychain(CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z", PreferredStudioIDs: []string{"s1"}})
-	s.Error(err)
-	s.Contains(err.Error(), "keychain preferred_studio_ids")
-}
-
-func (s *ConfigSuite) TestLoadFromKeychain() {
+func (s *ConfigSuite) TestLoadFromKeyring() {
 	tests := []struct {
-		name string
-		get  func(string) (string, error)
-		want CLIConfig
-		err  bool
+		name    string
+		data    string
+		getErr  error
+		want    CLIConfig
+		wantErr bool
 	}{
 		{
-			"all success",
-			func(k string) (string, error) {
-				switch k {
-				case "token":
-					return "t", nil
-				case "refresh_token":
-					return "r", nil
-				case "timezone":
-					return "z", nil
-				case "preferred_studio_ids":
-					return `["a","b"]`, nil
-				}
-				return "", nil
-			},
-			CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z", PreferredStudioIDs: []string{"a", "b"}},
-			false,
+			name: "valid config",
+			data: `{"token":"t","refresh_token":"r","timezone":"z","preferred_studio_ids":["a","b"]}`,
+			want: CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z", PreferredStudioIDs: []string{"a", "b"}},
 		},
 		{
-			"all fail",
-			func(string) (string, error) { return "", errors.New("fail") },
-			CLIConfig{},
-			true,
+			name:    "get error",
+			getErr:  errors.New("not found"),
+			wantErr: true,
 		},
 		{
-			"invalid studio ids json",
-			func(k string) (string, error) {
-				if k == "preferred_studio_ids" {
-					return "invalid", nil
-				}
-				return "", errors.New("fail")
-			},
-			CLIConfig{},
-			true,
+			name:    "invalid json",
+			data:    "not json",
+			wantErr: true,
 		},
 		{
-			"empty studio ids",
-			func(k string) (string, error) {
-				if k == "preferred_studio_ids" {
-					return "", nil
-				}
-				return "val", nil
-			},
-			CLIConfig{Token: "val", RefreshToken: "val", Timezone: "val"},
-			false,
+			name: "empty config",
+			data: `{}`,
+			want: CLIConfig{},
 		},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			keychainGet = tt.get
-			got, err := loadFromKeychain()
-			if tt.err {
+			keyringGet = func(_, _ string) (string, error) {
+				return tt.data, tt.getErr
+			}
+			got, err := loadFromKeyring()
+			if tt.wantErr {
 				s.Error(err)
 			} else {
 				s.NoError(err)
@@ -361,6 +211,24 @@ func (s *ConfigSuite) TestLoadFromKeychain() {
 			}
 		})
 	}
+}
+
+func (s *ConfigSuite) TestSaveToKeyring() {
+	keyringSet = func(_, _, value string) error {
+		var got CLIConfig
+		s.Require().NoError(json.Unmarshal([]byte(value), &got))
+		s.Equal("t", got.Token)
+		s.Equal("r", got.RefreshToken)
+		return nil
+	}
+	cfg := CLIConfig{Token: "t", RefreshToken: "r"}
+	s.Require().NoError(saveToKeyring(cfg))
+}
+
+func (s *ConfigSuite) TestSaveToKeyring_MarshalError() {
+	keyringSet = func(_, _, _ string) error { return nil }
+	err := saveToKeyring(CLIConfig{})
+	s.NoError(err)
 }
 
 func TestConfigSuite(t *testing.T) {

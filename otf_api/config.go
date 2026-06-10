@@ -2,7 +2,6 @@ package otf_api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,98 +55,49 @@ func saveToFile(config CLIConfig) error {
 	if err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
 	return os.WriteFile(path, data, 0600)
 }
 
 func LoadConfig() (CLIConfig, error) {
+	config, kcErr := loadFromKeyring()
+	if kcErr == nil {
+		return config, nil
+	}
+
 	config, fileErr := loadFromFile()
-	hasKeychain := keychainAvailable()
-
-	if fileErr != nil && !hasKeychain {
-		return config, fileErr
+	if fileErr != nil {
+		return config, fmt.Errorf("keyring: %w; file: %w", kcErr, fileErr)
 	}
-
-	if hasKeychain {
-		kcConfig, err := loadFromKeychain()
-		if err == nil {
-			config = kcConfig
-		}
-	}
-
 	return config, nil
 }
 
-func loadFromKeychain() (CLIConfig, error) {
+func loadFromKeyring() (CLIConfig, error) {
 	var config CLIConfig
-	var errs []error
-
-	if token, err := keychainGet("token"); err != nil {
-		errs = append(errs, err)
-	} else {
-		config.Token = token
+	data, err := keyringGet(keyringService, keyringUser)
+	if err != nil {
+		return config, err
 	}
-
-	if refresh, err := keychainGet("refresh_token"); err != nil {
-		errs = append(errs, err)
-	} else {
-		config.RefreshToken = refresh
-	}
-
-	if tz, err := keychainGet("timezone"); err != nil {
-		errs = append(errs, err)
-	} else {
-		config.Timezone = tz
-	}
-
-	if raw, err := keychainGet("preferred_studio_ids"); err != nil {
-		errs = append(errs, err)
-	} else if raw != "" {
-		var ids []string
-		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-			errs = append(errs, err)
-		} else {
-			config.PreferredStudioIDs = ids
-		}
-	}
-
-	if len(errs) > 0 {
-		return config, fmt.Errorf("keychain: %w", errors.Join(errs...))
+	if err := json.Unmarshal([]byte(data), &config); err != nil {
+		return config, fmt.Errorf("unmarshaling keyring config: %w", err)
 	}
 	return config, nil
 }
 
 func SaveConfig(config CLIConfig) error {
-	if keychainAvailable() {
-		if err := storeInKeychain(config); err == nil {
-			return nil
-		}
+	if err := saveToKeyring(config); err == nil {
+		return nil
 	}
-
 	return saveToFile(config)
 }
 
-func storeInKeychain(config CLIConfig) error {
-	if config.Token != "" {
-		if err := keychainSet("token", config.Token); err != nil {
-			return fmt.Errorf("keychain token: %w", err)
-		}
+func saveToKeyring(config CLIConfig) error {
+	data, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
 	}
-	if config.RefreshToken != "" {
-		if err := keychainSet("refresh_token", config.RefreshToken); err != nil {
-			return fmt.Errorf("keychain refresh_token: %w", err)
-		}
-	}
-	if config.Timezone != "" {
-		if err := keychainSet("timezone", config.Timezone); err != nil {
-			return fmt.Errorf("keychain timezone: %w", err)
-		}
-	}
-	if len(config.PreferredStudioIDs) > 0 {
-		idsJSON, _ := json.Marshal(config.PreferredStudioIDs)
-		if err := keychainSet("preferred_studio_ids", string(idsJSON)); err != nil {
-			return fmt.Errorf("keychain preferred_studio_ids: %w", err)
-		}
-	}
-	return nil
+	return keyringSet(keyringService, keyringUser, string(data))
 }
