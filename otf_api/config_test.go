@@ -7,147 +7,125 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-func saveKeychainVars() func() {
-	origAvailable := keychainAvailable
-	origGet := keychainGet
-	origSet := keychainSet
-	return func() {
-		keychainAvailable = origAvailable
-		keychainGet = origGet
-		keychainSet = origSet
-	}
+type ConfigSuite struct {
+	suite.Suite
+	configPath string
+	origKC     func() bool
+	origGet    func(string) (string, error)
+	origSet    func(string, string) error
+	origPath   func() (string, error)
 }
 
-func saveConfigPath() func() {
-	orig := GetConfigPath
-	return func() { GetConfigPath = orig }
+func (s *ConfigSuite) SetupTest() {
+	s.configPath = filepath.Join(s.T().TempDir(), "config.json")
+	s.origKC = keychainAvailable
+	s.origGet = keychainGet
+	s.origSet = keychainSet
+	s.origPath = GetConfigPath
+	GetConfigPath = func() (string, error) { return s.configPath, nil }
 }
 
-func tempConfigPath(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(t.TempDir(), "config.json")
+func (s *ConfigSuite) TearDownTest() {
+	keychainAvailable = s.origKC
+	keychainGet = s.origGet
+	keychainSet = s.origSet
+	GetConfigPath = s.origPath
 }
 
-func TestGetConfigPath(t *testing.T) {
+func (s *ConfigSuite) writeFile(cfg CLIConfig) {
+	data, err := json.Marshal(cfg)
+	s.Require().NoError(err)
+	s.Require().NoError(os.WriteFile(s.configPath, data, 0600))
+}
+
+func (s *ConfigSuite) assertFile(cfg CLIConfig) {
+	data, err := os.ReadFile(s.configPath)
+	s.Require().NoError(err)
+	var got CLIConfig
+	s.Require().NoError(json.Unmarshal(data, &got))
+	s.Equal(cfg, got)
+}
+
+func (s *ConfigSuite) noKeychain()   { keychainAvailable = func() bool { return false } }
+func (s *ConfigSuite) withKeychain() { keychainAvailable = func() bool { return true } }
+
+func (s *ConfigSuite) TestGetConfigPath() {
+	// use real GetConfigPath
+	GetConfigPath = s.origPath
 	path, err := GetConfigPath()
-	require.NoError(t, err)
-	assert.Contains(t, path, "otf-cli")
-	assert.Contains(t, path, "config.json")
+	s.Require().NoError(err)
+	s.Contains(path, "otf-cli")
+	s.Contains(path, "config.json")
 }
 
-func TestSaveAndLoadFromFile(t *testing.T) {
-	defer saveConfigPath()()
-
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
+func (s *ConfigSuite) TestSaveAndLoadFromFile() {
 	saved := CLIConfig{
 		Token:              "tok",
 		RefreshToken:       "ref",
 		Timezone:           "America/Chicago",
 		PreferredStudioIDs: []string{"studio-1", "studio-2"},
 	}
-	err := saveToFile(saved)
-	require.NoError(t, err)
+	s.Require().NoError(saveToFile(saved))
 
 	loaded, err := loadFromFile()
-	require.NoError(t, err)
-	assert.Equal(t, saved, loaded)
+	s.Require().NoError(err)
+	s.Equal(saved, loaded)
 }
 
-func TestLoadFromFile_NotExist(t *testing.T) {
-	defer saveConfigPath()()
-
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
-	config, err := loadFromFile()
-	require.NoError(t, err)
-	assert.Empty(t, config.Token)
+func (s *ConfigSuite) TestLoadFromFile_NotExist() {
+	cfg, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Empty(cfg.Token)
 }
 
-func TestLoadFromFile_InvalidJSON(t *testing.T) {
-	defer saveConfigPath()()
-
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
-	require.NoError(t, os.WriteFile(configPath, []byte("not json"), 0600))
-
+func (s *ConfigSuite) TestLoadFromFile_InvalidJSON() {
+	s.Require().NoError(os.WriteFile(s.configPath, []byte("not json"), 0600))
 	_, err := loadFromFile()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parsing")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "parsing")
 }
 
-func TestLoadFromFile_GetConfigPathError(t *testing.T) {
-	defer saveConfigPath()()
-
+func (s *ConfigSuite) TestLoadFromFile_PathError() {
 	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
-
 	_, err := loadFromFile()
-	require.Error(t, err)
+	s.Error(err)
 }
 
-func TestSaveToFile_GetConfigPathError(t *testing.T) {
-	defer saveConfigPath()()
-
+func (s *ConfigSuite) TestSaveToFile_PathError() {
 	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
-
 	err := saveToFile(CLIConfig{Token: "tok"})
-	require.Error(t, err)
+	s.Error(err)
 }
 
-func TestLoadConfig_NoKeychain_FileExists(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return false }
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
-	saved := CLIConfig{Token: "file-token", RefreshToken: "file-refresh"}
-	data, _ := json.Marshal(saved)
-	require.NoError(t, os.WriteFile(configPath, data, 0600))
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "file-token", config.Token)
-	assert.Equal(t, "file-refresh", config.RefreshToken)
+func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileExists() {
+	s.noKeychain()
+	s.writeFile(CLIConfig{Token: "t", RefreshToken: "r"})
+	got, err := LoadConfig()
+	s.Require().NoError(err)
+	s.Equal("t", got.Token)
+	s.Equal("r", got.RefreshToken)
 }
 
-func TestLoadConfig_NoKeychain_FileNotExist(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return false }
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Empty(t, config.Token)
+func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileNotExist() {
+	s.noKeychain()
+	got, err := LoadConfig()
+	s.Require().NoError(err)
+	s.Empty(got.Token)
 }
 
-func TestLoadConfig_NoKeychain_FileError(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return false }
+func (s *ConfigSuite) TestLoadConfig_NoKeychain_FileError() {
+	s.noKeychain()
 	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
-
 	_, err := LoadConfig()
-	require.Error(t, err)
+	s.Error(err)
 }
 
-func TestLoadConfig_KeychainOverridesFile(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
+func (s *ConfigSuite) TestLoadConfig_KeychainOverridesFile() {
+	s.withKeychain()
+	s.writeFile(CLIConfig{Token: "file-token"})
 	keychainGet = func(k string) (string, error) {
 		switch k {
 		case "token":
@@ -162,259 +140,186 @@ func TestLoadConfig_KeychainOverridesFile(t *testing.T) {
 		return "", nil
 	}
 
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-	saved := CLIConfig{Token: "file-token"}
-	data, _ := json.Marshal(saved)
-	require.NoError(t, os.WriteFile(configPath, data, 0600))
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "kc-token", config.Token)
-	assert.Equal(t, "kc-refresh", config.RefreshToken)
-	assert.Equal(t, "America/Chicago", config.Timezone)
-	assert.Equal(t, []string{"studio-a"}, config.PreferredStudioIDs)
+	got, err := LoadConfig()
+	s.Require().NoError(err)
+	s.Equal("kc-token", got.Token)
+	s.Equal("kc-refresh", got.RefreshToken)
+	s.Equal("America/Chicago", got.Timezone)
+	s.Equal([]string{"studio-a"}, got.PreferredStudioIDs)
 }
 
-func TestLoadConfig_KeychainFails_FallsBackToFile(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
-	keychainGet = func(k string) (string, error) {
-		return "", errors.New("keychain error")
+func (s *ConfigSuite) TestLoadConfig_KeychainFails_FallsBackToFile() {
+	tests := []struct {
+		name    string
+		keyGet  func(string) (string, error)
+	}{
+		{"all fail", func(string) (string, error) { return "", errors.New("fail") }},
+		{"partial fail", func(k string) (string, error) {
+			if k == "token" { return "kc-token", nil }
+			return "", errors.New("fail")
+		}},
 	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.withKeychain()
+			keychainGet = tt.keyGet
+			s.writeFile(CLIConfig{Token: "file-token", Timezone: "America/Chicago"})
 
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-	saved := CLIConfig{Token: "file-token", Timezone: "America/Chicago"}
-	data, _ := json.Marshal(saved)
-	require.NoError(t, os.WriteFile(configPath, data, 0600))
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "file-token", config.Token)
-	assert.Equal(t, "America/Chicago", config.Timezone)
-}
-
-func TestLoadConfig_KeychainPartialFailure_FallsBackToFile(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
-	callCount := 0
-	keychainGet = func(k string) (string, error) {
-		callCount++
-		if k == "token" {
-			return "kc-token", nil
-		}
-		return "", errors.New("keychain error")
+			got, err := LoadConfig()
+			s.Require().NoError(err)
+			s.Equal("file-token", got.Token)
+			s.Equal("America/Chicago", got.Timezone)
+		})
 	}
-
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-	saved := CLIConfig{Token: "file-token", Timezone: "America/Chicago"}
-	data, _ := json.Marshal(saved)
-	require.NoError(t, os.WriteFile(configPath, data, 0600))
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "file-token", config.Token)
-	assert.Equal(t, "America/Chicago", config.Timezone)
 }
 
-func TestLoadConfig_FileErrorWithKeychain_FallsBackToKeychain(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
+func (s *ConfigSuite) TestLoadConfig_FileErrorWithKeychain_FallsBackToKeychain() {
+	s.withKeychain()
+	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
 	keychainGet = func(k string) (string, error) {
 		switch k {
 		case "token":
 			return "kc-token", nil
 		case "refresh_token":
 			return "kc-refresh", nil
-		case "timezone":
-			return "", nil
 		}
 		return "", nil
 	}
 
-	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
-
-	config, err := LoadConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "kc-token", config.Token)
-	assert.Equal(t, "kc-refresh", config.RefreshToken)
+	got, err := LoadConfig()
+	s.Require().NoError(err)
+	s.Equal("kc-token", got.Token)
+	s.Equal("kc-refresh", got.RefreshToken)
 }
 
-func TestSaveConfig_NoKeychain(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return false }
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
-
+func (s *ConfigSuite) TestSaveConfig_NoKeychain() {
+	s.noKeychain()
 	cfg := CLIConfig{Token: "saved-token"}
-	err := SaveConfig(cfg)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	var loaded CLIConfig
-	require.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, "saved-token", loaded.Token)
+	s.Require().NoError(SaveConfig(cfg))
+	s.assertFile(cfg)
 }
 
-func TestSaveConfig_KeychainSuccess(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
-	var stored = map[string]string{}
+func (s *ConfigSuite) TestSaveConfig_KeychainSuccess() {
+	s.withKeychain()
+	var stored map[string]string
 	keychainSet = func(k, v string) error {
+		if stored == nil {
+			stored = map[string]string{}
+		}
 		stored[k] = v
 		return nil
 	}
 
-	cfg := CLIConfig{
-		Token:        "t",
-		RefreshToken: "r",
-		Timezone:     "z",
-	}
-	err := SaveConfig(cfg)
-	require.NoError(t, err)
-	assert.Equal(t, "t", stored["token"])
-	assert.Equal(t, "r", stored["refresh_token"])
-	assert.Equal(t, "z", stored["timezone"])
+	cfg := CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z"}
+	s.Require().NoError(SaveConfig(cfg))
+	s.Equal("t", stored["token"])
+	s.Equal("r", stored["refresh_token"])
+	s.Equal("z", stored["timezone"])
 }
 
-func TestSaveConfig_KeychainFails_FallsBackToFile(t *testing.T) {
-	defer saveConfigPath()()
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
-	keychainSet = func(k, v string) error {
-		return errors.New("keychain set failed")
-	}
-
-	configPath := tempConfigPath(t)
-	GetConfigPath = func() (string, error) { return configPath, nil }
+func (s *ConfigSuite) TestSaveConfig_KeychainFails_FallsBackToFile() {
+	s.withKeychain()
+	keychainSet = func(string, string) error { return errors.New("fail") }
 
 	cfg := CLIConfig{Token: "file-token"}
-	err := SaveConfig(cfg)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	var loaded CLIConfig
-	require.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, "file-token", loaded.Token)
+	s.Require().NoError(SaveConfig(cfg))
+	s.assertFile(cfg)
 }
 
-func TestStoreInKeychain_EmptyFields(t *testing.T) {
-	defer saveKeychainVars()()
-
+func (s *ConfigSuite) TestStoreInKeychain_EmptyFields() {
 	keychainSet = func(k, v string) error {
-		t.Errorf("unexpected call to keychainSet(%q, %q)", k, v)
+		s.T().Errorf("unexpected call keychainSet(%q, %q)", k, v)
 		return nil
 	}
-
-	err := storeInKeychain(CLIConfig{})
-	require.NoError(t, err)
+	s.Require().NoError(storeInKeychain(CLIConfig{}))
 }
 
-func TestStoreInKeychain_PreferredStudioIDs(t *testing.T) {
-	defer saveKeychainVars()()
-
+func (s *ConfigSuite) TestStoreInKeychain_PreferredStudioIDs() {
 	var capturedKey, capturedValue string
 	keychainSet = func(k, v string) error {
-		capturedKey = k
-		capturedValue = v
+		capturedKey, capturedValue = k, v
 		return nil
 	}
-
-	err := storeInKeychain(CLIConfig{PreferredStudioIDs: []string{"s1", "s2"}})
-	require.NoError(t, err)
-	assert.Equal(t, "preferred_studio_ids", capturedKey)
-	assert.Equal(t, `["s1","s2"]`, capturedValue)
+	s.Require().NoError(storeInKeychain(CLIConfig{PreferredStudioIDs: []string{"s1", "s2"}}))
+	s.Equal("preferred_studio_ids", capturedKey)
+	s.Equal(`["s1","s2"]`, capturedValue)
 }
 
-func TestLoadFromKeychain_AllSuccess(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainGet = func(k string) (string, error) {
-		switch k {
-		case "token":
-			return "t", nil
-		case "refresh_token":
-			return "r", nil
-		case "timezone":
-			return "z", nil
-		case "preferred_studio_ids":
-			return `["a","b"]`, nil
-		}
-		return "", nil
-	}
-
-	config, err := loadFromKeychain()
-	require.NoError(t, err)
-	assert.Equal(t, "t", config.Token)
-	assert.Equal(t, "r", config.RefreshToken)
-	assert.Equal(t, "z", config.Timezone)
-	assert.Equal(t, []string{"a", "b"}, config.PreferredStudioIDs)
+func (s *ConfigSuite) TestStoreInKeychain_Error() {
+	keychainSet = func(k, v string) error { return errors.New("keychain error") }
+	err := storeInKeychain(CLIConfig{Token: "t"})
+	s.Error(err)
+	s.Contains(err.Error(), "keychain token")
 }
 
-func TestLoadFromKeychain_AllFail(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainGet = func(k string) (string, error) {
-		return "", errors.New("fail")
+func (s *ConfigSuite) TestLoadFromKeychain() {
+	tests := []struct {
+		name string
+		get  func(string) (string, error)
+		want CLIConfig
+		err  bool
+	}{
+		{
+			"all success",
+			func(k string) (string, error) {
+				switch k {
+				case "token":
+					return "t", nil
+				case "refresh_token":
+					return "r", nil
+				case "timezone":
+					return "z", nil
+				case "preferred_studio_ids":
+					return `["a","b"]`, nil
+				}
+				return "", nil
+			},
+			CLIConfig{Token: "t", RefreshToken: "r", Timezone: "z", PreferredStudioIDs: []string{"a", "b"}},
+			false,
+		},
+		{
+			"all fail",
+			func(string) (string, error) { return "", errors.New("fail") },
+			CLIConfig{},
+			true,
+		},
+		{
+			"invalid studio ids json",
+			func(k string) (string, error) {
+				if k == "preferred_studio_ids" {
+					return "invalid", nil
+				}
+				return "", errors.New("fail")
+			},
+			CLIConfig{},
+			true,
+		},
+		{
+			"empty studio ids",
+			func(k string) (string, error) {
+				if k == "preferred_studio_ids" {
+					return "", nil
+				}
+				return "val", nil
+			},
+			CLIConfig{Token: "val", RefreshToken: "val", Timezone: "val"},
+			false,
+		},
 	}
-
-	_, err := loadFromKeychain()
-	require.Error(t, err)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			keychainGet = tt.get
+			got, err := loadFromKeychain()
+			if tt.err {
+				s.Error(err)
+			} else {
+				s.NoError(err)
+				s.Equal(tt.want, got)
+			}
+		})
+	}
 }
 
-func TestLoadFromKeychain_InvalidStudioIDsJSON(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainGet = func(k string) (string, error) {
-		if k == "preferred_studio_ids" {
-			return "invalid json", nil
-		}
-		return "", errors.New("fail")
-	}
-
-	_, err := loadFromKeychain()
-	require.Error(t, err)
-}
-
-func TestLoadFromKeychain_EmptyStudioIDs(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainGet = func(k string) (string, error) {
-		if k == "preferred_studio_ids" {
-			return "", nil
-		}
-		return "val", nil
-	}
-
-	config, err := loadFromKeychain()
-	require.NoError(t, err)
-	assert.Nil(t, config.PreferredStudioIDs)
-}
-
-func TestSaveConfig_KeychainSetError(t *testing.T) {
-	defer saveKeychainVars()()
-
-	keychainAvailable = func() bool { return true }
-	keychainSet = func(k, v string) error {
-		return errors.New("keychain error")
-	}
-
-	cfg := CLIConfig{Token: "t"}
-	err := storeInKeychain(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keychain token")
+func TestConfigSuite(t *testing.T) {
+	suite.Run(t, new(ConfigSuite))
 }

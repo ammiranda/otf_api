@@ -3,71 +3,89 @@
 package otf_api
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestKeychainIntegration_StoreAndRetrieve(t *testing.T) {
-	const testKey = "_test_otf_api_token"
-	want := "test-secret-value"
-
-	err := keychainSet(testKey, want)
-	require.NoError(t, err)
-	t.Cleanup(func() { cleanupKeychain(t, testKey) })
-
-	got, err := keychainGet(testKey)
-	require.NoError(t, err)
-	assert.Equal(t, want, got)
+type KeychainSuite struct {
+	suite.Suite
+	createdKeys []string
 }
 
-func TestKeychainIntegration_Overwrite(t *testing.T) {
-	const testKey = "_test_otf_api_overwrite"
-
-	err := keychainSet(testKey, "first")
-	require.NoError(t, err)
-	t.Cleanup(func() { cleanupKeychain(t, testKey) })
-
-	err = keychainSet(testKey, "second")
-	require.NoError(t, err)
-
-	got, err := keychainGet(testKey)
-	require.NoError(t, err)
-	assert.Equal(t, "second", got)
-}
-
-func TestKeychainIntegration_MultipleKeys(t *testing.T) {
-	const (
-		tokenKey = "_test_otf_api_token"
-		refKey   = "_test_otf_api_refresh"
-	)
-
-	err := keychainSet(tokenKey, "token-val")
-	require.NoError(t, err)
-	t.Cleanup(func() { cleanupKeychain(t, tokenKey) })
-
-	err = keychainSet(refKey, "refresh-val")
-	require.NoError(t, err)
-	t.Cleanup(func() { cleanupKeychain(t, refKey) })
-
-	token, err := keychainGet(tokenKey)
-	require.NoError(t, err)
-	assert.Equal(t, "token-val", token)
-
-	refresh, err := keychainGet(refKey)
-	require.NoError(t, err)
-	assert.Equal(t, "refresh-val", refresh)
-}
-
-func TestKeychainIntegration_MissingKey(t *testing.T) {
-	_, err := keychainGet("_test_otf_api_nonexistent")
-	require.Error(t, err)
-}
-
-func cleanupKeychain(t testing.TB, key string) {
-	t.Helper()
-	if err := keychainDel(key); err != nil {
-		t.Logf("cleanup keychain %q: %v", key, err)
+func (s *KeychainSuite) TearDownTest() {
+	for _, k := range s.createdKeys {
+		if err := keychainDel(k); err != nil {
+			s.T().Logf("cleanup keychain %q: %v", k, err)
+		}
 	}
+	s.createdKeys = nil
+}
+
+func (s *KeychainSuite) key(key string) string {
+	return fmt.Sprintf("_test_otf_api_%s", key)
+}
+
+func (s *KeychainSuite) track(key string) {
+	s.createdKeys = append(s.createdKeys, s.key(key))
+}
+
+func (s *KeychainSuite) set(key, value string) {
+	s.Require().NoError(keychainSet(s.key(key), value))
+}
+
+func (s *KeychainSuite) get(key string) string {
+	val, err := keychainGet(s.key(key))
+	s.Require().NoError(err)
+	return val
+}
+
+func (s *KeychainSuite) TestStoreAndRetrieve() {
+	tests := []struct {
+		key   string
+		value string
+	}{
+		{"token", "test-secret-value"},
+		{"refresh", "another-secret"},
+		{"timezone", "America/Chicago"},
+		{"studio_ids", `["a","b"]`},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.key, func() {
+			s.track(tt.key)
+			s.set(tt.key, tt.value)
+			got := s.get(tt.key)
+			s.Assert().Equal(tt.value, got)
+		})
+	}
+}
+
+func (s *KeychainSuite) TestOverwrite() {
+	s.track("overwrite")
+	s.set("overwrite", "first")
+	s.set("overwrite", "second")
+	got := s.get("overwrite")
+	s.Assert().Equal("second", got)
+}
+
+func (s *KeychainSuite) TestMultipleKeys() {
+	s.track("token")
+	s.track("refresh")
+
+	s.set("token", "token-val")
+	s.set("refresh", "refresh-val")
+
+	s.Assert().Equal("token-val", s.get("token"))
+	s.Assert().Equal("refresh-val", s.get("refresh"))
+}
+
+func (s *KeychainSuite) TestMissingKey() {
+	_, err := keychainGet(s.key("nonexistent"))
+	s.Require().Error(err)
+}
+
+func TestKeychainIntegration(t *testing.T) {
+	suite.Run(t, new(KeychainSuite))
 }
