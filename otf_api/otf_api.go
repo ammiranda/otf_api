@@ -1,7 +1,6 @@
 package otf_api
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -25,19 +24,22 @@ type Client struct {
 	authenticator Authenticator
 }
 
-// NewClient constructor that creates and returns a new instance
-// of the OTF API client with a Cognito authenticator by default.
-func NewClient() (*Client, error) {
+func NewClient() *Client {
 	baseIOURL := os.Getenv("OTF_API_IO_BASE_URL")
+	if baseIOURL == "" {
+		baseIOURL = "https://api.orangetheory.io/v1/"
+	}
 	baseCOURL := os.Getenv("OTF_API_CO_BASE_URL")
+	if baseCOURL == "" {
+		baseCOURL = "https://api.orangetheory.co/mobile/v1/"
+	}
 	authURL := os.Getenv("OTF_AUTH_URL")
+	if authURL == "" {
+		authURL = "https://cognito-idp.us-east-1.amazonaws.com/"
+	}
 	clientID := os.Getenv("OTF_CLIENT_ID")
 	if clientID == "" {
 		clientID = DefaultClientID
-	}
-
-	if baseIOURL == "" || baseCOURL == "" || authURL == "" {
-		return nil, fmt.Errorf("missing required env vars: OTF_API_IO_BASE_URL=%q OTF_API_CO_BASE_URL=%q OTF_AUTH_URL=%q", baseIOURL, baseCOURL, authURL)
 	}
 
 	c := &Client{
@@ -50,5 +52,5 @@ func NewClient() (*Client, error) {
 		authenticator: NewCognitoAuthenticator(authURL, clientID),
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
-	return c, nil
+	return c
 }

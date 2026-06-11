@@ -67,24 +67,23 @@ make build-cli    # produces bin/otf-cli
 make build-mcp    # produces bin/otf-mcp
 ```
 
-### 2. Configure credentials
-
-Copy `.env.example` to `.env` and fill in your details:
+### 2. Authenticate
 
 ```bash
-cp .env.example .env
+otf-cli auth
 ```
 
-You need two things:
-- `OTF_USERNAME` — your OTF account email
-- `OTF_PASSWORD` — your OTF account password
+This prompts for your OTF email and password, authenticates with the API, and
+stores your session securely in the system keychain. Future commands reuse the
+cached session (tokens refresh automatically).
 
-> `OTF_CLIENT_ID` is optional — it defaults to the iOS app client ID. Only set it if the default stops working.
+> **No keychain?** Set `OTF_USERNAME` and `OTF_PASSWORD` environment variables instead.
+> `OTF_CLIENT_ID` is optional — it defaults to the iOS app client ID.
 
 ### 3. Configure your studios
 
 ```bash
-./bin/otf-cli configure studios
+otf-cli configure studios
 ```
 
 This auto-detects your location from your IP and lets you select which studios to track.
@@ -93,25 +92,26 @@ This auto-detects your location from your IP and lets you select which studios t
 
 ```bash
 # View schedules
-./bin/otf-cli schedules
+otf-cli schedules
 
 # JSON output (pipe to jq)
-./bin/otf-cli schedules --json | jq
+otf-cli schedules --json | jq
 
 # Book a specific class non-interactively
-./bin/otf-cli schedules --class-id "<class-id>" --book --yes
+otf-cli schedules --class-id "<class-id>" --book --yes
 
 # List your bookings
-./bin/otf-cli bookings list
+otf-cli bookings list
 
 # Cancel a booking
-./bin/otf-cli bookings cancel <booking-id> --yes
+otf-cli bookings cancel <booking-id> --yes
 ```
 
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
+| `auth` | Authenticate and save credentials to system keychain |
 | `configure studios` | Search & save preferred OTF studios |
 | `configure timezone` | Set your display timezone |
 | `schedules` | View & interactively book classes |
@@ -150,7 +150,20 @@ make build-mcp
 
 ### Claude Desktop Setup
 
-Add to your `claude_desktop_config.json`:
+If you already ran `otf-cli auth`, the MCP server picks up the cached session from
+the keychain automatically — no env vars needed:
+
+```json
+{
+  "mcpServers": {
+    "otf": {
+      "command": "/path/to/bin/otf-mcp"
+    }
+  }
+}
+```
+
+Alternatively, set credentials via environment variables:
 
 ```json
 {
@@ -159,21 +172,21 @@ Add to your `claude_desktop_config.json`:
       "command": "/path/to/bin/otf-mcp",
       "env": {
         "OTF_USERNAME": "your@email.com",
-        "OTF_PASSWORD": "your-password",
-        "OTF_API_IO_BASE_URL": "https://api.orangetheory.io/v1/",
-        "OTF_API_CO_BASE_URL": "https://api.orangetheory.co/mobile/v1/",
-        "OTF_AUTH_URL": "https://cognito-idp.us-east-1.amazonaws.com/"
+        "OTF_PASSWORD": "your-password"
       }
     }
   }
 }
 ```
 
-The server reads the same config file as the CLI for preferred studios and cached tokens, so you only need to configure studios once.
+All API URLs and the client ID have sensible defaults — no other configuration needed.
+
+The server reads the same config as the CLI for preferred studios and cached tokens, so you only need to configure studios once.
 
 ### Cline / Cursor / Other MCP Clients
 
-Same pattern — point the MCP client at the `otf-mcp` binary with the environment variables above.
+Same pattern — point the MCP client at the `otf-mcp` binary. If you've authenticated
+with `otf-cli auth`, no env vars are needed.
 
 ## SDK Usage (Go)
 
@@ -189,10 +202,7 @@ import (
 )
 
 func main() {
-    client, err := otf_api.NewClient()
-    if err != nil {
-        log.Fatal(err)
-    }
+    client := otf_api.NewClient()
 
     ctx := context.Background()
     if err := client.Authenticate(ctx, "email", "password"); err != nil {
@@ -211,15 +221,14 @@ func main() {
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OTF_USERNAME` | No* | — | Your OTF account email |
-| `OTF_PASSWORD` | No* | — | Your OTF account password |
+| `OTF_USERNAME` | No | — | OTF account email (or use `otf-cli auth`) |
+| `OTF_PASSWORD` | No | — | OTF account password (or use `otf-cli auth`) |
 | `OTF_CLIENT_ID` | No | `65knvqta6p37efc2l3eh26pl5o` | Cognito app client ID (iOS app) |
 | `OTF_API_IO_BASE_URL` | No | `https://api.orangetheory.io/v1/` | Classes & bookings API |
 | `OTF_API_CO_BASE_URL` | No | `https://api.orangetheory.co/mobile/v1/` | Studios API |
 | `OTF_AUTH_URL` | No | `https://cognito-idp.us-east-1.amazonaws.com/` | Cognito auth endpoint |
 
-\* Credentials only needed on first run; tokens are cached to `~/.config/otf-cli/config.json`
-  (macOS Keychain is used automatically when available).
+> Credentials and session tokens are cached in the system keychain automatically. Run `otf-cli auth` once and you're set.
 
 ## How It Works
 
@@ -254,8 +263,7 @@ The SDK handles:
 ├── cmd/
 │   ├── otf-cli/        # Interactive CLI (cobra + survey)
 │   └── otf-mcp/        # MCP JSON-RPC server
-├── Makefile            # Build targets
-└── .env.example        # Environment template
+└── Makefile            # Build targets
 ```
 
 ## Development
