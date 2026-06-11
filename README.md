@@ -75,12 +75,11 @@ Copy `.env.example` to `.env` and fill in your details:
 cp .env.example .env
 ```
 
-You need three things:
+You need two things:
 - `OTF_USERNAME` — your OTF account email
 - `OTF_PASSWORD` — your OTF account password
-- `OTF_CLIENT_ID` — the Cognito app client ID (extracted from the OTF app)
 
-> **Getting OTF_CLIENT_ID**: Use a network proxy (like mitmproxy or Proxyman) while launching the OTF mobile app, and look for the `client_id` parameter in the Cognito authentication request.
+> `OTF_CLIENT_ID` is optional — it defaults to the iOS app client ID. Only set it if the default stops working.
 
 ### 3. Configure your studios
 
@@ -161,7 +160,6 @@ Add to your `claude_desktop_config.json`:
       "env": {
         "OTF_USERNAME": "your@email.com",
         "OTF_PASSWORD": "your-password",
-        "OTF_CLIENT_ID": "your-client-id",
         "OTF_API_IO_BASE_URL": "https://api.orangetheory.io/v1/",
         "OTF_API_CO_BASE_URL": "https://api.orangetheory.co/mobile/v1/",
         "OTF_AUTH_URL": "https://cognito-idp.us-east-1.amazonaws.com/"
