@@ -1,8 +1,6 @@
 version: 2
 
 project_name: otf-mcp
-git:
-  tag_prefix: cmd/otf-mcp/
 
 builds:
   - id: otf-mcp

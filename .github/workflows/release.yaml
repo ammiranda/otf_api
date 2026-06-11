@@ -53,6 +53,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GORELEASER_CURRENT_TAG: v${{ steps.module.outputs.version }}
 
       - name: Release MCP
         if: steps.module.outputs.name == 'otf-mcp'
@@ -63,6 +64,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GORELEASER_CURRENT_TAG: v${{ steps.module.outputs.version }}
 
       - name: Generate release notes
         if: steps.module.outputs.name == 'sdk'
