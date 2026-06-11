@@ -12,15 +12,11 @@ import (
 )
 
 func setupClient(ctx context.Context) *otf_api.Client {
-	apiClient, err := otf_api.NewClient()
-	if err != nil {
-		log.Fatalf("Error creating API client: %v", err)
-	}
+	apiClient := otf_api.NewClient()
 
 	config, cfgErr := loadConfig()
-	tryToken := cfgErr == nil && config.Token != ""
 
-	if tryToken {
+	if cfgErr == nil && config.Token != "" {
 		apiClient.SetToken(config.Token)
 		apiClient.RefreshToken = config.RefreshToken
 		if !apiClient.NeedAuth() {
@@ -28,23 +24,35 @@ func setupClient(ctx context.Context) *otf_api.Client {
 		}
 	}
 
-	username := os.Getenv("OTF_USERNAME")
-	password := os.Getenv("OTF_PASSWORD")
+	username, password := credsFromConfig(config)
 	if username == "" || password == "" {
-		log.Fatal("OTF_USERNAME and OTF_PASSWORD environment variables must be set (or cache a token by running a command interactively first)")
+		username = os.Getenv("OTF_USERNAME")
+		password = os.Getenv("OTF_PASSWORD")
+	}
+	if username == "" || password == "" {
+		log.Fatal("No credentials available. Run 'otf-cli auth' to set up, or set OTF_USERNAME and OTF_PASSWORD.")
 	}
 
 	if err := apiClient.Authenticate(ctx, username, password); err != nil {
 		log.Fatalf("Error authenticating: %v", err)
 	}
 
+	config.Username = username
+	config.Password = password
 	config.Token = apiClient.Token
 	config.RefreshToken = apiClient.RefreshToken
 	if saveErr := saveConfig(config); saveErr != nil {
-		log.Printf("Warning: could not cache token: %v", saveErr)
+		log.Printf("Warning: could not cache credentials: %v", saveErr)
 	}
 
 	return apiClient
+}
+
+func credsFromConfig(config otf_api.CLIConfig) (string, string) {
+	if config.Username != "" && config.Password != "" {
+		return config.Username, config.Password
+	}
+	return "", ""
 }
 
 func writeJSON(v any) {

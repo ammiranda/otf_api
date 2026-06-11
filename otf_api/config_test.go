@@ -16,6 +16,7 @@ type ConfigSuite struct {
 	origGet    func(string, string) (string, error)
 	origSet    func(string, string, string) error
 	origPath   func() (string, error)
+	origKey    func() ([]byte, error)
 }
 
 func (s *ConfigSuite) SetupTest() {
@@ -23,15 +24,18 @@ func (s *ConfigSuite) SetupTest() {
 	s.origGet = keyringGet
 	s.origSet = keyringSet
 	s.origPath = GetConfigPath
+	s.origKey = deriveKey
 	GetConfigPath = func() (string, error) { return s.configPath, nil }
 	keyringGet = func(_, _ string) (string, error) { return "", errors.New("keyring unavailable") }
 	keyringSet = func(_, _, _ string) error { return errors.New("keyring unavailable") }
+	deriveKey = func() ([]byte, error) { return nil, errors.New("encryption disabled") }
 }
 
 func (s *ConfigSuite) TearDownTest() {
 	keyringGet = s.origGet
 	keyringSet = s.origSet
 	GetConfigPath = s.origPath
+	deriveKey = s.origKey
 }
 
 func (s *ConfigSuite) withKeyring() {
@@ -50,6 +54,12 @@ func (s *ConfigSuite) withKeyringData(cfg CLIConfig) {
 	}
 	keyringSet = func(_, _, _ string) error {
 		return nil
+	}
+}
+
+func (s *ConfigSuite) withEncryption() {
+	deriveKey = func() ([]byte, error) {
+		return []byte("0123456789abcdef0123456789abcdef"), nil
 	}
 }
 
@@ -91,6 +101,73 @@ func (s *ConfigSuite) TestSaveAndLoadFromFile() {
 	loaded, err := loadFromFile()
 	s.Require().NoError(err)
 	s.Equal(saved, loaded)
+}
+
+func (s *ConfigSuite) TestSaveToFile_StripsCredentials() {
+	saved := CLIConfig{
+		Token:    "tok",
+		Username: "user@example.com",
+		Password: "secret",
+	}
+	s.Require().NoError(saveToFile(saved))
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Equal("tok", loaded.Token)
+	s.Empty(loaded.Username)
+	s.Empty(loaded.Password)
+}
+
+func (s *ConfigSuite) TestSaveToFile_EncryptsTokens() {
+	s.withEncryption()
+	saved := CLIConfig{Token: "my-token", RefreshToken: "my-refresh"}
+	s.Require().NoError(saveToFile(saved))
+
+	data, err := os.ReadFile(s.configPath)
+	s.Require().NoError(err)
+
+	var raw map[string]any
+	s.Require().NoError(json.Unmarshal(data, &raw))
+	s.Empty(raw["token"])
+	s.Empty(raw["refresh_token"])
+	s.NotEmpty(raw["encrypted_token"])
+	s.NotEmpty(raw["encrypted_refresh_token"])
+}
+
+func (s *ConfigSuite) TestSaveAndLoadFromFile_WithEncryption() {
+	s.withEncryption()
+	saved := CLIConfig{Token: "my-token", RefreshToken: "my-refresh", Timezone: "UTC"}
+	s.Require().NoError(saveToFile(saved))
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Equal("my-token", loaded.Token)
+	s.Equal("my-refresh", loaded.RefreshToken)
+	s.Equal("UTC", loaded.Timezone)
+	s.NotEmpty(loaded.EncryptedToken)
+	s.NotEmpty(loaded.EncryptedRefreshToken)
+}
+
+func (s *ConfigSuite) TestLoadFromFile_BackwardCompatPlaintextTokens() {
+	s.writeFile(CLIConfig{Token: "plain-token", RefreshToken: "plain-refresh", Timezone: "EST"})
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Equal("plain-token", loaded.Token)
+	s.Equal("plain-refresh", loaded.RefreshToken)
+	s.Equal("EST", loaded.Timezone)
+}
+
+func (s *ConfigSuite) TestLoadFromFile_EncryptionFailureFallsBackToEmpty() {
+	s.withEncryption()
+
+	saved := CLIConfig{Token: "good-token"}
+	s.Require().NoError(saveToFile(saved))
+
+	deriveKey = func() ([]byte, error) { return []byte("different-key-wont-match!!!!"), nil }
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Empty(loaded.Token)
 }
 
 func (s *ConfigSuite) TestLoadFromFile_NotExist() {
@@ -219,9 +296,11 @@ func (s *ConfigSuite) TestSaveToKeyring() {
 		s.Require().NoError(json.Unmarshal([]byte(value), &got))
 		s.Equal("t", got.Token)
 		s.Equal("r", got.RefreshToken)
+		s.Equal("u", got.Username)
+		s.Equal("p", got.Password)
 		return nil
 	}
-	cfg := CLIConfig{Token: "t", RefreshToken: "r"}
+	cfg := CLIConfig{Token: "t", RefreshToken: "r", Username: "u", Password: "p"}
 	s.Require().NoError(saveToKeyring(cfg))
 }
 
@@ -229,6 +308,133 @@ func (s *ConfigSuite) TestSaveToKeyring_MarshalError() {
 	keyringSet = func(_, _, _ string) error { return nil }
 	err := saveToKeyring(CLIConfig{})
 	s.NoError(err)
+}
+
+func TestEncryptDecrypt_RoundTrip(t *testing.T) {
+	origKey := deriveKey
+	defer func() { deriveKey = origKey }()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	original := "my-sensitive-token"
+
+	enc, err := encrypt(original, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enc == "" || enc == original {
+		t.Fatalf("encrypted output should not be empty or equal to input")
+	}
+
+	dec, err := decrypt(enc, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec != original {
+		t.Fatalf("round-trip failed: got %q, want %q", dec, original)
+	}
+}
+
+func TestEncryptDecrypt_Empty(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+
+	enc, err := encrypt("", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enc != "" {
+		t.Fatalf("encrypt of empty should return empty, got %q", enc)
+	}
+
+	dec, err := decrypt("", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec != "" {
+		t.Fatalf("decrypt of empty should return empty, got %q", dec)
+	}
+}
+
+func TestDecrypt_InvalidBase64(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	_, err := decrypt("not-valid-base64!!!", key)
+	if err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+}
+
+func TestDecrypt_WrongKey(t *testing.T) {
+	key1 := []byte("0123456789abcdef0123456789abcdef")
+	key2 := []byte("ffffffffffffffffffffffffffffffff")
+	original := "hello-world"
+
+	enc, err := encrypt(original, key1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = decrypt(enc, key2)
+	if err == nil {
+		t.Fatal("expected error when decrypting with wrong key")
+	}
+}
+
+func TestDecrypt_TamperedCiphertext(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+
+	enc, err := encrypt("my-token", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tampered := enc[:len(enc)-1] + "X"
+	_, err = decrypt(tampered, key)
+	if err == nil {
+		t.Fatal("expected error for tampered ciphertext")
+	}
+}
+
+func TestDeriveKey_Deterministic(t *testing.T) {
+	origPath := GetConfigPath
+	defer func() { GetConfigPath = origPath }()
+
+	path1 := "/tmp/otf-test-dir-a/config.json"
+	path2 := "/tmp/otf-test-dir-b/config.json"
+
+	GetConfigPath = func() (string, error) { return path1, nil }
+	k1a, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k1b, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(k1a) != 32 {
+		t.Fatalf("expected 32-byte key, got %d", len(k1a))
+	}
+	if string(k1a) != string(k1b) {
+		t.Fatal("deriveKey should be deterministic for the same path")
+	}
+
+	GetConfigPath = func() (string, error) { return path2, nil }
+	k2, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(k1a) == string(k2) {
+		t.Fatal("deriveKey should differ for different paths")
+	}
+}
+
+func TestDeriveKey_Error(t *testing.T) {
+	origPath := GetConfigPath
+	defer func() { GetConfigPath = origPath }()
+
+	GetConfigPath = func() (string, error) { return "", errors.New("no config dir") }
+	_, err := deriveKey()
+	if err == nil {
+		t.Fatal("expected error when GetConfigPath fails")
+	}
 }
 
 func TestConfigSuite(t *testing.T) {

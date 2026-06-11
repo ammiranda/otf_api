@@ -5,7 +5,6 @@ go 1.26
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
 	github.com/ammiranda/otf_api v0.1.0
-	github.com/joho/godotenv v1.5.1
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.44.0

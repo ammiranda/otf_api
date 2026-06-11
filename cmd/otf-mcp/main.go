@@ -150,12 +150,10 @@ func (s *MCPServer) ensureClient() *otf_api.Client {
 		return s.client
 	}
 
-	client, err := otf_api.NewClient()
-	if err != nil {
-		log.Fatalf("Error creating API client: %v", err)
-	}
+	client := otf_api.NewClient()
 
 	config, cfgErr := loadConfig()
+
 	if cfgErr == nil && config.Token != "" {
 		client.SetToken(config.Token)
 		client.RefreshToken = config.RefreshToken
@@ -165,24 +163,36 @@ func (s *MCPServer) ensureClient() *otf_api.Client {
 		}
 	}
 
-	username := os.Getenv("OTF_USERNAME")
-	password := os.Getenv("OTF_PASSWORD")
+	username, password := credsFromConfig(config)
 	if username == "" || password == "" {
-		log.Fatal("OTF_USERNAME and OTF_PASSWORD environment variables must be set")
+		username = os.Getenv("OTF_USERNAME")
+		password = os.Getenv("OTF_PASSWORD")
+	}
+	if username == "" || password == "" {
+		log.Fatal("No credentials available. Authenticate via the CLI with 'otf-cli auth', or set OTF_USERNAME and OTF_PASSWORD.")
 	}
 
 	if err := client.Authenticate(s.ctx, username, password); err != nil {
 		log.Fatalf("Error authenticating: %v", err)
 	}
 
+	config.Username = username
+	config.Password = password
 	config.Token = client.Token
 	config.RefreshToken = client.RefreshToken
 	if saveErr := saveConfig(config); saveErr != nil {
-		log.Printf("Warning: could not cache token: %v", saveErr)
+		log.Printf("Warning: could not cache credentials: %v", saveErr)
 	}
 
 	s.client = client
 	return client
+}
+
+func credsFromConfig(config otf_api.CLIConfig) (string, string) {
+	if config.Username != "" && config.Password != "" {
+		return config.Username, config.Password
+	}
+	return "", ""
 }
 
 func (s *MCPServer) handleToolsList(id any) {
