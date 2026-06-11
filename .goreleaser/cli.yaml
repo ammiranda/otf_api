@@ -1,6 +1,7 @@
 version: 2
 
 project_name: otf-cli
+tag_prefix: cmd/otf-cli/
 
 builds:
   - id: otf-cli
