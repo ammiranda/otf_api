@@ -6,3 +6,4 @@ cmd/otf-cli/otf-cli
 cmd/otf-mcp/otf-mcp
 otf-cli
 otf-mcp
+coverage*.out
