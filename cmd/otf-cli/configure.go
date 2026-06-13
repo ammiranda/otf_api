@@ -55,9 +55,6 @@ Examples:
 			lat = configureStudioLat
 			long = configureStudioLong
 			dist = configureStudioDist
-			if lat == 0 && long == 0 {
-				log.Fatal("--lat and --long must be provided")
-			}
 			if dist <= 0 {
 				dist = 10
 			}
