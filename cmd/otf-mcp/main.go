@@ -77,7 +77,10 @@ type IPLocation struct {
 	Country string  `json:"country"`
 }
 
-var version = "0.1.0"
+var (
+	version  = "0.1.0"
+	ipAPIURL = "http://ip-api.com/json/"
+)
 
 func main() {
 	log.SetFlags(0)
@@ -259,22 +262,27 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "search_studios",
-			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances. Detects location from your IP if lat/long are omitted.",
+			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"lat": {
 						"type": "number",
-						"description": "Latitude (e.g. 40.7128). Auto-detected from IP if omitted."
+						"description": "Latitude (e.g. 40.7128)."
 					},
 					"long": {
 						"type": "number",
-						"description": "Longitude (e.g. -74.0060). Auto-detected from IP if omitted."
+						"description": "Longitude (e.g. -74.0060)."
 					},
 					"distance": {
 						"type": "number",
 						"description": "Search radius in miles (default: 10)",
 						"default": 10
+					},
+					"allow_ip_location": {
+						"type": "boolean",
+						"description": "Consent to detect your approximate location from your IP via a third-party service (ip-api.com). Required when lat/long are not provided.",
+						"default": false
 					}
 				}
 			}`),
@@ -402,9 +410,10 @@ func (s *MCPServer) bookClass(client *otf_api.Client, args json.RawMessage) Call
 
 func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) CallToolResult {
 	var params struct {
-		Lat      *float64 `json:"lat"`
-		Long     *float64 `json:"long"`
-		Distance float64  `json:"distance"`
+		Lat             *float64 `json:"lat"`
+		Long            *float64 `json:"long"`
+		Distance        float64  `json:"distance"`
+		AllowIPLocation *bool    `json:"allow_ip_location"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "Invalid parameters"}}}
@@ -415,17 +424,38 @@ func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) 
 
 	var lat, long float64
 	var source string
+	var useIPLocation bool
+
 	if params.Lat != nil && params.Long != nil {
 		lat = *params.Lat
 		long = *params.Long
 	} else {
-		loc, err := detectLocation()
-		if err != nil {
-			return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Could not detect location: %v. Please provide lat and long explicitly.", err)}}}
+		if params.AllowIPLocation != nil {
+			useIPLocation = *params.AllowIPLocation
+		} else {
+			cfg, err := loadConfig()
+			if err == nil && cfg.AllowIPLocation != nil {
+				useIPLocation = *cfg.AllowIPLocation
+			}
 		}
-		lat = loc.Lat
-		long = loc.Lon
-		source = fmt.Sprintf("detected from your IP in %s, %s, %s", loc.City, loc.Region, loc.Country)
+
+		if useIPLocation {
+			loc, err := detectLocation()
+			if err != nil {
+				return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Could not detect location: %v. Please provide lat and long explicitly.", err)}}}
+			}
+			lat = loc.Lat
+			long = loc.Lon
+			source = fmt.Sprintf("detected from your IP in %s, %s, %s", loc.City, loc.Region, loc.Country)
+		} else {
+			return CallToolResult{
+				IsError: true,
+				Content: []ToolContent{{
+					Type: "text",
+					Text: "Location detection from your IP requires your consent. Provide lat and long explicitly, set allow_ip_location=true, or use 'otf-cli configure studios' to consent once.",
+				}},
+			}
+		}
 	}
 
 	studios, err := client.ListStudios(s.ctx, lat, long, params.Distance)
@@ -443,7 +473,7 @@ func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) 
 }
 
 func detectLocation() (*IPLocation, error) {
-	resp, err := http.Get("http://ip-api.com/json/")
+	resp, err := http.Get(ipAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("IP geolocation request failed: %w", err)
 	}

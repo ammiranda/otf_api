@@ -59,25 +59,44 @@ Examples:
 				dist = 10
 			}
 		} else {
-			var locationSource string
+			cfg, _ := loadConfig()
 
-			resp, err := http.Get("http://ip-api.com/json/")
-			if err == nil {
-				defer func() {
-					if err := resp.Body.Close(); err != nil {
-						log.Printf("error closing response body: %v", err)
-					}
-				}()
-				var location IPLocation
-				if err := json.NewDecoder(resp.Body).Decode(&location); err == nil {
-					lat = location.Lat
-					long = location.Lon
-					locationSource = fmt.Sprintf("detected from your IP in %s, %s, %s",
-						location.City, location.Region, location.Country)
+			var locationSource string
+			var err error
+
+			allowIP := cfg.AllowIPLocation
+			if allowIP == nil {
+				var consent bool
+				consentPrompt := &survey.Confirm{
+					Message: "Detect your approximate location from your IP? This sends your IP to ip-api.com, a third-party geolocation service.",
+					Default: false,
 				}
+				if err := survey.AskOne(consentPrompt, &consent); err != nil {
+					log.Fatalf("Error getting consent: %v", err)
+				}
+				cfg.AllowIPLocation = &consent
+				if err := saveConfig(cfg); err != nil {
+					log.Printf("Warning: Could not save consent preference: %v", err)
+				}
+				allowIP = &consent
 			}
-			if err != nil || locationSource == "" {
-				log.Printf("Warning: Could not detect location from IP: %v", err)
+
+			if *allowIP {
+				resp, getErr := http.Get("http://ip-api.com/json/")
+				if getErr != nil {
+					log.Printf("Warning: Could not detect location from IP: %v", getErr)
+				} else {
+					defer resp.Body.Close()
+					var location IPLocation
+					if decodeErr := json.NewDecoder(resp.Body).Decode(&location); decodeErr != nil {
+						log.Printf("Warning: Could not parse IP geolocation response: %v", decodeErr)
+					} else {
+						lat = location.Lat
+						long = location.Lon
+						locationSource = fmt.Sprintf("detected from your IP in %s, %s, %s",
+							location.City, location.Region, location.Country)
+					}
+				}
 			}
 
 			if lat == 0 && long == 0 {

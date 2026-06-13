@@ -21,38 +21,38 @@ type ConfigSuite struct {
 
 func (s *ConfigSuite) SetupTest() {
 	s.configPath = filepath.Join(s.T().TempDir(), "config.json")
-	s.origGet = keyringGet
-	s.origSet = keyringSet
+	s.origGet = KeyringGet
+	s.origSet = KeyringSet
 	s.origPath = GetConfigPath
 	s.origKey = deriveKey
 	GetConfigPath = func() (string, error) { return s.configPath, nil }
-	keyringGet = func(_, _ string) (string, error) { return "", errors.New("keyring unavailable") }
-	keyringSet = func(_, _, _ string) error { return errors.New("keyring unavailable") }
+	KeyringGet = func(_, _ string) (string, error) { return "", errors.New("keyring unavailable") }
+	KeyringSet = func(_, _, _ string) error { return errors.New("keyring unavailable") }
 	deriveKey = func() ([]byte, error) { return nil, errors.New("encryption disabled") }
 }
 
 func (s *ConfigSuite) TearDownTest() {
-	keyringGet = s.origGet
-	keyringSet = s.origSet
+	KeyringGet = s.origGet
+	KeyringSet = s.origSet
 	GetConfigPath = s.origPath
 	deriveKey = s.origKey
 }
 
 func (s *ConfigSuite) withKeyring() {
-	keyringGet = func(_, _ string) (string, error) {
+	KeyringGet = func(_, _ string) (string, error) {
 		return "", errors.New("keyring unavailable")
 	}
-	keyringSet = func(_, _, _ string) error {
+	KeyringSet = func(_, _, _ string) error {
 		return errors.New("keyring unavailable")
 	}
 }
 
 func (s *ConfigSuite) withKeyringData(cfg CLIConfig) {
 	data, _ := json.Marshal(cfg)
-	keyringGet = func(_, _ string) (string, error) {
+	KeyringGet = func(_, _ string) (string, error) {
 		return string(data), nil
 	}
-	keyringSet = func(_, _, _ string) error {
+	KeyringSet = func(_, _, _ string) error {
 		return nil
 	}
 }
@@ -64,7 +64,7 @@ func (s *ConfigSuite) withEncryption() {
 }
 
 func (s *ConfigSuite) withKeyringSet() {
-	keyringSet = func(_, _, _ string) error { return nil }
+	KeyringSet = func(_, _, _ string) error { return nil }
 }
 
 func (s *ConfigSuite) writeFile(cfg CLIConfig) {
@@ -232,6 +232,36 @@ func (s *ConfigSuite) TestLoadConfig_BothFail() {
 	s.Contains(err.Error(), "file")
 }
 
+func (s *ConfigSuite) TestSaveAndLoad_AllowIPLocation_True() {
+	allow := true
+	saved := CLIConfig{AllowIPLocation: &allow}
+	s.Require().NoError(saveToFile(saved))
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Require().NotNil(loaded.AllowIPLocation)
+	s.True(*loaded.AllowIPLocation)
+}
+
+func (s *ConfigSuite) TestSaveAndLoad_AllowIPLocation_False() {
+	allow := false
+	saved := CLIConfig{AllowIPLocation: &allow}
+	s.Require().NoError(saveToFile(saved))
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Require().NotNil(loaded.AllowIPLocation)
+	s.False(*loaded.AllowIPLocation)
+}
+
+func (s *ConfigSuite) TestLoad_AllowIPLocation_Unset() {
+	s.writeFile(CLIConfig{Timezone: "UTC"})
+
+	loaded, err := loadFromFile()
+	s.Require().NoError(err)
+	s.Nil(loaded.AllowIPLocation)
+}
+
 func (s *ConfigSuite) TestSaveConfig_KeyringSuccess() {
 	s.withKeyringSet()
 	cfg := CLIConfig{Token: "kr-token"}
@@ -276,7 +306,7 @@ func (s *ConfigSuite) TestLoadFromKeyring() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			keyringGet = func(_, _ string) (string, error) {
+			KeyringGet = func(_, _ string) (string, error) {
 				return tt.data, tt.getErr
 			}
 			got, err := loadFromKeyring()
@@ -291,7 +321,7 @@ func (s *ConfigSuite) TestLoadFromKeyring() {
 }
 
 func (s *ConfigSuite) TestSaveToKeyring() {
-	keyringSet = func(_, _, value string) error {
+	KeyringSet = func(_, _, value string) error {
 		var got CLIConfig
 		s.Require().NoError(json.Unmarshal([]byte(value), &got))
 		s.Equal("t", got.Token)
@@ -305,7 +335,7 @@ func (s *ConfigSuite) TestSaveToKeyring() {
 }
 
 func (s *ConfigSuite) TestSaveToKeyring_MarshalError() {
-	keyringSet = func(_, _, _ string) error { return nil }
+	KeyringSet = func(_, _, _ string) error { return nil }
 	err := saveToKeyring(CLIConfig{})
 	s.NoError(err)
 }

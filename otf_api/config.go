@@ -26,6 +26,7 @@ type CLIConfig struct {
 	Password              string   `json:"password,omitempty"`
 	EncryptedToken        string   `json:"encrypted_token,omitempty"`
 	EncryptedRefreshToken string   `json:"encrypted_refresh_token,omitempty"`
+	AllowIPLocation       *bool    `json:"allow_ip_location,omitempty"`
 }
 
 var GetConfigPath = func() (string, error) {
@@ -178,7 +179,7 @@ func LoadConfig() (CLIConfig, error) {
 
 func loadFromKeyring() (CLIConfig, error) {
 	var config CLIConfig
-	data, err := keyringGet(keyringService, keyringUser)
+	data, err := KeyringGet(keyringService, keyringUser)
 	if err != nil {
 		return config, err
 	}
@@ -200,5 +201,5 @@ func saveToKeyring(config CLIConfig) error {
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
-	return keyringSet(keyringService, keyringUser, string(data))
+	return KeyringSet(keyringService, keyringUser, string(data))
 }
