@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -65,6 +67,14 @@ type CallToolResult struct {
 type ToolContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type IPLocation struct {
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	City    string  `json:"city"`
+	Region  string  `json:"regionName"`
+	Country string  `json:"country"`
 }
 
 var version = "0.1.0"
@@ -249,25 +259,24 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "search_studios",
-			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances.",
+			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances. Detects location from your IP if lat/long are omitted.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"lat": {
 						"type": "number",
-						"description": "Latitude (e.g. 40.7128)"
+						"description": "Latitude (e.g. 40.7128). Auto-detected from IP if omitted."
 					},
 					"long": {
 						"type": "number",
-						"description": "Longitude (e.g. -74.0060)"
+						"description": "Longitude (e.g. -74.0060). Auto-detected from IP if omitted."
 					},
 					"distance": {
 						"type": "number",
 						"description": "Search radius in miles (default: 10)",
 						"default": 10
 					}
-				},
-				"required": ["lat", "long"]
+				}
 			}`),
 		},
 	}
@@ -404,13 +413,53 @@ func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) 
 		params.Distance = 10
 	}
 
+	var source string
+	if params.Lat == 0 && params.Long == 0 {
+		loc, err := detectLocation()
+		if err != nil {
+			return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Could not detect location: %v. Please provide lat and long explicitly.", err)}}}
+		}
+		params.Lat = loc.Lat
+		params.Long = loc.Lon
+		source = fmt.Sprintf("detected from your IP in %s, %s, %s", loc.City, loc.Region, loc.Country)
+	}
+
 	studios, err := client.ListStudios(s.ctx, params.Lat, params.Long, params.Distance)
 	if err != nil {
 		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error searching studios: %v", err)}}}
 	}
 
+	var sb strings.Builder
+	if source != "" {
+		sb.WriteString(fmt.Sprintf("Location: %s\n\n", source))
+	}
 	data, _ := json.MarshalIndent(studios, "", "  ")
-	return CallToolResult{Content: []ToolContent{{Type: "text", Text: string(data)}}}
+	sb.WriteString(string(data))
+	return CallToolResult{Content: []ToolContent{{Type: "text", Text: sb.String()}}}
+}
+
+func detectLocation() (*IPLocation, error) {
+	resp, err := http.Get("http://ip-api.com/json/")
+	if err != nil {
+		return nil, fmt.Errorf("IP geolocation request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read IP geolocation response: %w", err)
+	}
+
+	var loc IPLocation
+	if err := json.Unmarshal(body, &loc); err != nil {
+		return nil, fmt.Errorf("failed to parse IP geolocation response: %w", err)
+	}
+
+	if loc.Lat == 0 && loc.Lon == 0 {
+		return nil, fmt.Errorf("IP geolocation returned no coordinates")
+	}
+
+	return &loc, nil
 }
 
 func (s *MCPServer) writeResult(id any, result any) {
