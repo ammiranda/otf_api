@@ -86,7 +86,7 @@ cached session (tokens refresh automatically).
 otf-cli configure studios
 ```
 
-This auto-detects your location from your IP and lets you select which studios to track.
+With your consent (asked once, saved to config), this auto-detects your location from your IP and lets you select which studios to track. You can also provide explicit lat/long coordinates with `--lat`, `--long`.
 
 ### 4. Browse & book
 
@@ -146,7 +146,7 @@ make build-mcp
 | `list_bookings` | List your current/upcoming bookings |
 | `book_class` | Book a class by class ID (optional waitlist) |
 | `cancel_booking` | Cancel a booking by ID |
-| `search_studios` | Search for studios near lat/lng coordinates |
+| `search_studios` | Search for studios near lat/lng or approximate IP-based location (requires consent) |
 
 ### Claude Desktop Setup
 
@@ -253,16 +253,21 @@ The SDK handles:
 
 ```
 .
-├── otf_api.go          # Client constructor, env loading
-├── auth.go             # Authentication flows
-├── cognito.go          # Cognito authenticator
-├── middleware.go       # HTTP middleware (auth headers, retry)
-├── studios.go          # Studio search
-├── schedule.go         # Class schedule fetching
-├── booking.go          # Booking CRUD
+├── otf_api/            # Go SDK package
+│   ├── otf_api.go      # Client constructor, env loading
+│   ├── auth.go         # Authentication flows
+│   ├── cognito.go      # Cognito authenticator
+│   ├── config.go       # Config save/load (file + keychain)
+│   ├── keyring.go      # macOS Keychain integration
+│   ├── middleware.go   # HTTP middleware (auth headers, retry)
+│   ├── studios.go      # Studio search
+│   ├── schedule.go     # Class schedule fetching
+│   ├── booking.go      # Booking CRUD
+│   └── *_test.go       # Test files alongside each source
 ├── cmd/
 │   ├── otf-cli/        # Interactive CLI (cobra + survey)
 │   └── otf-mcp/        # MCP JSON-RPC server
+├── bin/                # Build output (gitignored)
 └── Makefile            # Build targets
 ```
 
