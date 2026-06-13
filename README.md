@@ -146,7 +146,7 @@ make build-mcp
 | `list_bookings` | List your current/upcoming bookings |
 | `book_class` | Book a class by class ID (optional waitlist) |
 | `cancel_booking` | Cancel a booking by ID |
-| `search_studios` | Search for studios near lat/lng or approximate IP-based location (requires consent) |
+| `search_studios` | Search for studios near lat/lng or approximate IP-based location (optionally within a radius, defaults to 10 miles; requires consent for IP) |
 
 ### Claude Desktop Setup
 

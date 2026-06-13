@@ -262,7 +262,7 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "search_studios",
-			Description: "Search for OTF studios near a location. Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in.",
+			Description: "Search for OTF studios near a location (optionally within a radius in miles, defaults to 10). Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
