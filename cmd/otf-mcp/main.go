@@ -402,9 +402,9 @@ func (s *MCPServer) bookClass(client *otf_api.Client, args json.RawMessage) Call
 
 func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) CallToolResult {
 	var params struct {
-		Lat      float64 `json:"lat"`
-		Long     float64 `json:"long"`
-		Distance float64 `json:"distance"`
+		Lat      *float64 `json:"lat"`
+		Long     *float64 `json:"long"`
+		Distance float64  `json:"distance"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "Invalid parameters"}}}
@@ -413,18 +413,22 @@ func (s *MCPServer) searchStudios(client *otf_api.Client, args json.RawMessage) 
 		params.Distance = 10
 	}
 
+	var lat, long float64
 	var source string
-	if params.Lat == 0 && params.Long == 0 {
+	if params.Lat != nil && params.Long != nil {
+		lat = *params.Lat
+		long = *params.Long
+	} else {
 		loc, err := detectLocation()
 		if err != nil {
 			return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Could not detect location: %v. Please provide lat and long explicitly.", err)}}}
 		}
-		params.Lat = loc.Lat
-		params.Long = loc.Lon
+		lat = loc.Lat
+		long = loc.Lon
 		source = fmt.Sprintf("detected from your IP in %s, %s, %s", loc.City, loc.Region, loc.Country)
 	}
 
-	studios, err := client.ListStudios(s.ctx, params.Lat, params.Long, params.Distance)
+	studios, err := client.ListStudios(s.ctx, lat, long, params.Distance)
 	if err != nil {
 		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error searching studios: %v", err)}}}
 	}
