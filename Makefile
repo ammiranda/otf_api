@@ -1,8 +1,8 @@
 build:
 	@echo "Building all binaries..."
 	@mkdir -p bin
-	go build -o bin/otf-cli ./cmd/otf-cli/main.go
-	go build -o bin/otf-mcp ./cmd/otf-mcp/main.go
+	go build -o bin/otf-cli ./cmd/otf-cli/
+	go build -o bin/otf-mcp ./cmd/otf-mcp/
 	@echo "Built: bin/otf-cli bin/otf-mcp"
 
 init-tools:
@@ -17,11 +17,11 @@ lint:
 build-cli:
 	@echo "Building CLI..."
 	@mkdir -p bin
-	go build -o bin/otf-cli ./cmd/otf-cli/main.go
+	go build -o bin/otf-cli ./cmd/otf-cli/
 	@echo "CLI built successfully to bin/otf-cli"
 
 build-mcp:
 	@echo "Building MCP server..."
 	@mkdir -p bin
-	go build -o bin/otf-mcp ./cmd/otf-mcp/main.go
+	go build -o bin/otf-mcp ./cmd/otf-mcp/
 	@echo "MCP server built successfully to bin/otf-mcp"

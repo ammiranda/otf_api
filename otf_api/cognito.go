@@ -17,7 +17,7 @@ type cognitoAuthenticator struct {
 
 // NewCognitoAuthenticator creates an Authenticator that uses AWS Cognito's
 // InitiateAuth API with USER_PASSWORD_AUTH and REFRESH_TOKEN_AUTH flows.
-func NewCognitoAuthenticator(authURL, clientID string) Authenticator {
+func NewCognitoAuthenticator(authURL string, clientID string) Authenticator {
 	return &cognitoAuthenticator{
 		authURL:  authURL,
 		clientID: clientID,
