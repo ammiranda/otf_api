@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/ammiranda/otf_api/otf_api"
 )
 
@@ -170,27 +171,38 @@ func (s *MCPServer) ensureClient() *otf_api.Client {
 	if cfgErr == nil && config.Token != "" {
 		client.SetToken(config.Token)
 		client.RefreshToken = config.RefreshToken
-		if !client.NeedAuth() {
-			s.client = client
-			return client
+	}
+
+	if client.NeedAuth() {
+		if client.RefreshToken != "" {
+			if err := client.RefreshAuth(s.ctx); err == nil {
+				config.Token = client.Token
+				config.RefreshToken = client.RefreshToken
+				if saveErr := saveConfig(config); saveErr != nil {
+					log.Printf("Warning: could not cache refreshed token: %v", saveErr)
+				}
+				s.client = client
+				return client
+			}
 		}
+
+		username, password := credsFromConfig(config)
+		if username == "" || password == "" {
+			var err error
+			username, password, err = promptCredentials()
+			if err != nil {
+				log.Fatalf("No credentials available and cannot prompt: %v", err)
+			}
+		}
+
+		if err := client.Authenticate(s.ctx, username, password); err != nil {
+			log.Fatalf("Error authenticating: %v", err)
+		}
+
+		config.Username = username
+		config.Password = password
 	}
 
-	username, password := credsFromConfig(config)
-	if username == "" || password == "" {
-		username = os.Getenv("OTF_USERNAME")
-		password = os.Getenv("OTF_PASSWORD")
-	}
-	if username == "" || password == "" {
-		log.Fatal("No credentials available. Authenticate via the CLI with 'otf-cli auth', or set OTF_USERNAME and OTF_PASSWORD.")
-	}
-
-	if err := client.Authenticate(s.ctx, username, password); err != nil {
-		log.Fatalf("Error authenticating: %v", err)
-	}
-
-	config.Username = username
-	config.Password = password
 	config.Token = client.Token
 	config.RefreshToken = client.RefreshToken
 	if saveErr := saveConfig(config); saveErr != nil {
@@ -206,6 +218,17 @@ func credsFromConfig(config otf_api.CLIConfig) (string, string) {
 		return config.Username, config.Password
 	}
 	return "", ""
+}
+
+func promptCredentials() (string, string, error) {
+	var username, password string
+	if err := survey.AskOne(&survey.Input{Message: "OTF Username:"}, &username, survey.WithValidator(survey.Required)); err != nil {
+		return "", "", err
+	}
+	if err := survey.AskOne(&survey.Password{Message: "OTF Password:"}, &password, survey.WithValidator(survey.Required)); err != nil {
+		return "", "", err
+	}
+	return username, password, nil
 }
 
 func (s *MCPServer) handleToolsList(id any) {
