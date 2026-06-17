@@ -73,14 +73,6 @@ func (s *ConfigSuite) writeFile(cfg CLIConfig) {
 	s.Require().NoError(os.WriteFile(s.configPath, data, 0600))
 }
 
-func (s *ConfigSuite) assertFile(cfg CLIConfig) {
-	data, err := os.ReadFile(s.configPath)
-	s.Require().NoError(err)
-	var got CLIConfig
-	s.Require().NoError(json.Unmarshal(data, &got))
-	s.Equal(cfg, got)
-}
-
 func (s *ConfigSuite) TestGetConfigPath() {
 	GetConfigPath = s.origPath
 	path, err := GetConfigPath()
