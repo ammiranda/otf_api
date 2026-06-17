@@ -73,14 +73,6 @@ func (s *ConfigSuite) writeFile(cfg CLIConfig) {
 	s.Require().NoError(os.WriteFile(s.configPath, data, 0600))
 }
 
-func (s *ConfigSuite) assertFile(cfg CLIConfig) {
-	data, err := os.ReadFile(s.configPath)
-	s.Require().NoError(err)
-	var got CLIConfig
-	s.Require().NoError(json.Unmarshal(data, &got))
-	s.Equal(cfg, got)
-}
-
 func (s *ConfigSuite) TestGetConfigPath() {
 	GetConfigPath = s.origPath
 	path, err := GetConfigPath()
@@ -90,6 +82,7 @@ func (s *ConfigSuite) TestGetConfigPath() {
 }
 
 func (s *ConfigSuite) TestSaveAndLoadFromFile() {
+	s.withEncryption()
 	saved := CLIConfig{
 		Token:              "tok",
 		RefreshToken:       "ref",
@@ -100,10 +93,16 @@ func (s *ConfigSuite) TestSaveAndLoadFromFile() {
 
 	loaded, err := loadFromFile()
 	s.Require().NoError(err)
-	s.Equal(saved, loaded)
+	s.Equal("tok", loaded.Token)
+	s.Equal("ref", loaded.RefreshToken)
+	s.Equal("America/Chicago", loaded.Timezone)
+	s.Equal([]string{"studio-1", "studio-2"}, loaded.PreferredStudioIDs)
+	s.NotEmpty(loaded.EncryptedToken)
+	s.NotEmpty(loaded.EncryptedRefreshToken)
 }
 
 func (s *ConfigSuite) TestSaveToFile_StripsCredentials() {
+	s.withEncryption()
 	saved := CLIConfig{
 		Token:    "tok",
 		Username: "user@example.com",
@@ -111,11 +110,22 @@ func (s *ConfigSuite) TestSaveToFile_StripsCredentials() {
 	}
 	s.Require().NoError(saveToFile(saved))
 
+	data, err := os.ReadFile(s.configPath)
+	s.Require().NoError(err)
+
+	var raw map[string]any
+	s.Require().NoError(json.Unmarshal(data, &raw))
+	s.Empty(raw["token"])
+	s.Empty(raw["username"])
+	s.Empty(raw["password"])
+	s.NotEmpty(raw["encrypted_username"])
+	s.NotEmpty(raw["encrypted_password"])
+
 	loaded, err := loadFromFile()
 	s.Require().NoError(err)
 	s.Equal("tok", loaded.Token)
-	s.Empty(loaded.Username)
-	s.Empty(loaded.Password)
+	s.Equal("user@example.com", loaded.Username)
+	s.Equal("secret", loaded.Password)
 }
 
 func (s *ConfigSuite) TestSaveToFile_EncryptsTokens() {
@@ -270,9 +280,16 @@ func (s *ConfigSuite) TestSaveConfig_KeyringSuccess() {
 
 func (s *ConfigSuite) TestSaveConfig_KeyringFails_FallsBackToFile() {
 	s.withKeyring()
+	s.withEncryption()
 	cfg := CLIConfig{Token: "file-token"}
 	s.Require().NoError(SaveConfig(cfg))
-	s.assertFile(cfg)
+
+	data, err := os.ReadFile(s.configPath)
+	s.Require().NoError(err)
+	var raw map[string]any
+	s.Require().NoError(json.Unmarshal(data, &raw))
+	s.Empty(raw["token"])
+	s.NotEmpty(raw["encrypted_token"])
 }
 
 func (s *ConfigSuite) TestLoadFromKeyring() {
