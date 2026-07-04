@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/ammiranda/otf_api/otf_api"
 )
 
@@ -91,6 +92,19 @@ func main() {
 		return
 	}
 
+	config, _ := loadConfig()
+	hasKeychainAuth := config.Token != "" || (config.Username != "" && config.Password != "")
+	hasEnvAuth := os.Getenv("OTF_USERNAME") != "" && os.Getenv("OTF_PASSWORD") != ""
+
+	if !hasKeychainAuth && !hasEnvAuth {
+		log.Println("WARNING: No credentials found. Run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars.")
+		log.Println("         Every tool call will fail with 'Authentication required' until you configure credentials.")
+	} else if config.Token != "" {
+		log.Println("Using cached session from keychain (authenticated).")
+	} else {
+		log.Println("Credentials available via env vars (will authenticate on first tool call).")
+	}
+
 	server := &MCPServer{}
 	if err := server.Run(); err != nil {
 		log.Fatalf("server error: %v", err)
@@ -158,9 +172,9 @@ func (s *MCPServer) handleInitialize(id any, params json.RawMessage) {
 	s.writeResult(id, result)
 }
 
-func (s *MCPServer) ensureClient() *otf_api.Client {
+func (s *MCPServer) ensureClient() (*otf_api.Client, error) {
 	if s.client != nil {
-		return s.client
+		return s.client, nil
 	}
 
 	client := otf_api.NewClient()
@@ -172,25 +186,39 @@ func (s *MCPServer) ensureClient() *otf_api.Client {
 		client.RefreshToken = config.RefreshToken
 		if !client.NeedAuth() {
 			s.client = client
-			return client
+			return client, nil
 		}
 	}
 
-	username, password := credsFromConfig(config)
-	if username == "" || password == "" {
-		username = os.Getenv("OTF_USERNAME")
-		password = os.Getenv("OTF_PASSWORD")
-	}
-	if username == "" || password == "" {
-		log.Fatal("No credentials available. Authenticate via the CLI with 'otf-cli auth', or set OTF_USERNAME and OTF_PASSWORD.")
-	}
+	if client.NeedAuth() {
+		if client.RefreshToken != "" {
+			if err := client.RefreshAuth(s.ctx); err == nil {
+				config.Token = client.Token
+				config.RefreshToken = client.RefreshToken
+				if saveErr := saveConfig(config); saveErr != nil {
+					log.Printf("Warning: could not cache refreshed token: %v", saveErr)
+				}
+				s.client = client
+				return client, nil
+			}
+		}
 
-	if err := client.Authenticate(s.ctx, username, password); err != nil {
-		log.Fatalf("Error authenticating: %v", err)
-	}
+		username, password := credsFromConfig(config)
+		if username == "" || password == "" {
+			var err error
+			username, password, err = promptCredentials()
+			if err != nil {
+				return nil, fmt.Errorf("no credentials available: run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars: %w", err)
+			}
+		}
 
-	config.Username = username
-	config.Password = password
+		if err := client.Authenticate(s.ctx, username, password); err != nil {
+			return nil, fmt.Errorf("authentication failed: %w", err)
+		}
+
+		config.Username = username
+		config.Password = password
+	}
 	config.Token = client.Token
 	config.RefreshToken = client.RefreshToken
 	if saveErr := saveConfig(config); saveErr != nil {
@@ -198,7 +226,7 @@ func (s *MCPServer) ensureClient() *otf_api.Client {
 	}
 
 	s.client = client
-	return client
+	return client, nil
 }
 
 func credsFromConfig(config otf_api.CLIConfig) (string, string) {
@@ -206,6 +234,17 @@ func credsFromConfig(config otf_api.CLIConfig) (string, string) {
 		return config.Username, config.Password
 	}
 	return "", ""
+}
+
+var promptCredentials = func() (string, string, error) {
+	var username, password string
+	if err := survey.AskOne(&survey.Input{Message: "OTF Username:"}, &username, survey.WithValidator(survey.Required)); err != nil {
+		return "", "", err
+	}
+	if err := survey.AskOne(&survey.Password{Message: "OTF Password:"}, &password, survey.WithValidator(survey.Required)); err != nil {
+		return "", "", err
+	}
+	return username, password, nil
 }
 
 func (s *MCPServer) handleToolsList(id any) {
@@ -302,7 +341,11 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 		return
 	}
 
-	client := s.ensureClient()
+	client, err := s.ensureClient()
+	if err != nil {
+		s.writeError(id, -32001, fmt.Sprintf("Authentication required: %v", err))
+		return
+	}
 
 	var result CallToolResult
 
@@ -508,10 +551,10 @@ func (s *MCPServer) writeError(id any, code int, message string) {
 	fmt.Println(string(data))
 }
 
-func loadConfig() (otf_api.CLIConfig, error) {
+var loadConfig = func() (otf_api.CLIConfig, error) {
 	return otf_api.LoadConfig()
 }
 
-func saveConfig(config otf_api.CLIConfig) error {
+var saveConfig = func(config otf_api.CLIConfig) error {
 	return otf_api.SaveConfig(config)
 }
