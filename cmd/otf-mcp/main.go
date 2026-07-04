@@ -78,6 +78,13 @@ type IPLocation struct {
 	Country string  `json:"country"`
 }
 
+const (
+	errCodeParseError     = -32700
+	errCodeMethodNotFound = -32601
+	errCodeInvalidParams  = -32602
+	errCodeAuthRequired   = -32001
+)
+
 var (
 	version  = "0.1.0"
 	ipAPIURL = "http://ip-api.com/json/"
@@ -133,7 +140,7 @@ func (s *MCPServer) Run() error {
 
 		var req JSONRPCRequest
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			s.writeError(nil, -32700, "Parse error")
+			s.writeError(nil, errCodeParseError, "Parse error")
 			continue
 		}
 
@@ -153,7 +160,7 @@ func (s *MCPServer) Run() error {
 			s.handleToolCall(id, req.Params)
 		default:
 			if id != nil {
-				s.writeError(id, -32601, fmt.Sprintf("Method not found: %s", req.Method))
+				s.writeError(id, errCodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 			}
 		}
 	}
@@ -360,13 +367,13 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
-		s.writeError(id, -32602, "Invalid tool call params")
+		s.writeError(id, errCodeInvalidParams, "Invalid tool call params")
 		return
 	}
 
 	client, err := s.ensureClient()
 	if err != nil {
-		s.writeError(id, otf_api.ErrCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
+		s.writeError(id, errCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
 		return
 	}
 
@@ -384,7 +391,7 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 	case "search_studios":
 		result = s.searchStudios(client, call.Arguments)
 	default:
-		s.writeError(id, -32601, fmt.Sprintf("Unknown tool: %s", call.Name))
+		s.writeError(id, errCodeMethodNotFound, fmt.Sprintf("Unknown tool: %s", call.Name))
 		return
 	}
 
