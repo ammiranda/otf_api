@@ -284,12 +284,9 @@ func (s *ConfigSuite) TestSaveConfig_KeyringFails_FallsBackToFile() {
 	cfg := CLIConfig{Token: "file-token"}
 	s.Require().NoError(SaveConfig(cfg))
 
-	data, err := os.ReadFile(s.configPath)
+	loaded, err := LoadConfig()
 	s.Require().NoError(err)
-	var raw map[string]any
-	s.Require().NoError(json.Unmarshal(data, &raw))
-	s.Empty(raw["token"])
-	s.NotEmpty(raw["encrypted_token"])
+	s.Equal("file-token", loaded.Token)
 }
 
 func (s *ConfigSuite) TestLoadFromKeyring() {

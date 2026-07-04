@@ -25,6 +25,27 @@ It comes in three flavors:
 | **`otf-cli`** (CLI) | Interactive terminal app — browse & book with colored output |
 | **`otf-mcp`** (MCP Server) | AI-ready JSON-RPC server — use with Claude Desktop, Cline, etc. |
 
+## Prerequisites
+
+You need an active OrangeTheory Fitness membership with online booking access (the same email/password you use for the OTF app or website).
+
+**Authentication is required** before any API calls work. Choose one:
+
+| Method | Best for |
+|--------|----------|
+| Run `otf-cli auth` (interactive prompt, saves to keychain) | CLI users & anyone who can run the CLI once before using MCP |
+| Set `OTF_USERNAME` and `OTF_PASSWORD` env vars | MCP server users who can't/won't run the CLI first |
+
+> **⚠️ MCP server users:** The MCP server **cannot prompt you for credentials** — it runs headless over stdin/stdout. You **must** either (a) run `otf-cli auth` first (the MCP server shares the same keychain), or (b) set `OTF_USERNAME` and `OTF_PASSWORD` in your MCP client config. If neither is done, every tool call will fail with "Authentication required: no credentials available".
+
+## Common first-time gotchas
+
+- **"Authentication required" from MCP:** You haven't run `otf-cli auth` or set env vars. See Prerequisites above.
+- **"No studio IDs provided":** You haven't configured preferred studios. Run `otf-cli configure studios` or pass `studio_ids` explicitly to `get_schedules`.
+- **macOS Gatekeeper blocks the binary:** Run `xattr -d com.apple.quarantine $(which otf-mcp)` (see Install section).
+- **Keychain not available (SSH/Docker/CI):** Set `OTF_USERNAME` and `OTF_PASSWORD` env vars — the config file fallback needs these.
+- **Token expired / session revoked:** If you get auth errors after a previous working session, tokens expire after 1 hour. Auto-refresh handles this normally, but if the refresh token is also stale, just re-run `otf-cli auth` or restart the MCP client (it will re-auth with env vars).
+
 ## Demo
 
 ```
@@ -80,6 +101,11 @@ cached session (tokens refresh automatically).
 > **No keychain?** Set `OTF_USERNAME` and `OTF_PASSWORD` environment variables instead.
 > `OTF_CLIENT_ID` is optional — it defaults to the iOS app client ID.
 
+> **Using the MCP server?** You don't need to re-authenticate — `otf-mcp` shares the
+> same keychain config. Just run `otf-cli auth` once and the MCP server picks it up.
+> If you can't run the CLI at all, set `OTF_USERNAME`/`OTF_PASSWORD` in your MCP client config
+> instead (see [MCP Server](#mcp-server) below).
+
 ### 3. Configure your studios
 
 ```bash
@@ -131,6 +157,20 @@ otf-cli bookings cancel <booking-id> --yes
 
 The `otf-mcp` server exposes OTF functionality as MCP tools, letting AI assistants (Claude Desktop, Cline, etc.) look up classes and manage bookings on your behalf.
 
+### Authentication (important)
+
+The MCP server runs **headless** — it communicates over stdin/stdout JSON-RPC, not a terminal. This means:
+
+- **It cannot prompt you for credentials interactively.**
+- You **must** have credentials available from one of:
+  1. **Run `otf-cli auth` first** — the MCP server reads the same keychain/config. This is the recommended approach.
+  2. **Set `OTF_USERNAME` and `OTF_PASSWORD` env vars** in your MCP client config (see below).
+
+If neither is configured, every tool call will fail with:
+```
+Authentication required: no credentials available
+```
+
 ### Build
 
 ```bash
@@ -150,8 +190,7 @@ make build-mcp
 
 ### Claude Desktop Setup
 
-If you already ran `otf-cli auth`, the MCP server picks up the cached session from
-the keychain automatically — no env vars needed:
+**With keychain (recommended — run `otf-cli auth` first):**
 
 ```json
 {
@@ -163,7 +202,7 @@ the keychain automatically — no env vars needed:
 }
 ```
 
-Alternatively, set credentials via environment variables:
+**With environment variables (no `otf-cli auth` needed):**
 
 ```json
 {
