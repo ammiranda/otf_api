@@ -78,6 +78,8 @@ type IPLocation struct {
 	Country string  `json:"country"`
 }
 
+const errCodeAuthRequired = -32001
+
 var (
 	version  = "0.1.0"
 	ipAPIURL = "http://ip-api.com/json/"
@@ -92,7 +94,11 @@ func main() {
 		return
 	}
 
-	config, _ := loadConfig()
+	config, cfgErr := loadConfig()
+	if cfgErr != nil {
+		log.Printf("Warning: could not load config: %v", cfgErr)
+	}
+
 	hasKeychainAuth := config.Token != "" || (config.Username != "" && config.Password != "")
 	hasEnvAuth := os.Getenv("OTF_USERNAME") != "" && os.Getenv("OTF_PASSWORD") != ""
 
@@ -178,55 +184,75 @@ func (s *MCPServer) ensureClient() (*otf_api.Client, error) {
 	}
 
 	client := otf_api.NewClient()
-
 	config, cfgErr := loadConfig()
 
-	if cfgErr == nil && config.Token != "" {
-		client.SetToken(config.Token)
-		client.RefreshToken = config.RefreshToken
-		if !client.NeedAuth() {
-			s.client = client
-			return client, nil
-		}
+	s.restoreSession(client, config, cfgErr)
+	if !client.NeedAuth() {
+		s.client = client
+		return client, nil
 	}
 
-	if client.NeedAuth() {
-		if client.RefreshToken != "" {
-			if err := client.RefreshAuth(s.ctx); err == nil {
-				config.Token = client.Token
-				config.RefreshToken = client.RefreshToken
-				if saveErr := saveConfig(config); saveErr != nil {
-					log.Printf("Warning: could not cache refreshed token: %v", saveErr)
-				}
-				s.client = client
-				return client, nil
-			}
-		}
-
-		username, password := credsFromConfig(config)
-		if username == "" || password == "" {
-			var err error
-			username, password, err = promptCredentials()
-			if err != nil {
-				return nil, fmt.Errorf("no credentials available: run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars: %w", err)
-			}
-		}
-
-		if err := client.Authenticate(s.ctx, username, password); err != nil {
-			return nil, fmt.Errorf("authentication failed: %w", err)
-		}
-
-		config.Username = username
-		config.Password = password
+	if s.tryRefreshAuth(client, &config) {
+		s.client = client
+		return client, nil
 	}
-	config.Token = client.Token
-	config.RefreshToken = client.RefreshToken
-	if saveErr := saveConfig(config); saveErr != nil {
-		log.Printf("Warning: could not cache credentials: %v", saveErr)
+
+	if err := s.authenticate(client, &config); err != nil {
+		return nil, err
 	}
 
 	s.client = client
 	return client, nil
+}
+
+func (s *MCPServer) restoreSession(client *otf_api.Client, config otf_api.CLIConfig, cfgErr error) {
+	if cfgErr != nil || config.Token == "" {
+		return
+	}
+	client.SetToken(config.Token)
+	client.RefreshToken = config.RefreshToken
+}
+
+func (s *MCPServer) tryRefreshAuth(client *otf_api.Client, config *otf_api.CLIConfig) bool {
+	if !client.NeedAuth() {
+		return true
+	}
+	if client.RefreshToken == "" {
+		return false
+	}
+	if err := client.RefreshAuth(s.ctx); err != nil {
+		return false
+	}
+	config.Token = client.Token
+	config.RefreshToken = client.RefreshToken
+	if saveErr := saveConfig(*config); saveErr != nil {
+		log.Printf("Warning: could not cache refreshed token: %v", saveErr)
+	}
+	return true
+}
+
+func (s *MCPServer) authenticate(client *otf_api.Client, config *otf_api.CLIConfig) error {
+	username, password := credsFromConfig(*config)
+	if username == "" || password == "" {
+		var err error
+		username, password, err = promptCredentials()
+		if err != nil {
+			return fmt.Errorf("no credentials available: run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars: %w", err)
+		}
+	}
+
+	if err := client.Authenticate(s.ctx, username, password); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	config.Username = username
+	config.Password = password
+	config.Token = client.Token
+	config.RefreshToken = client.RefreshToken
+	if saveErr := saveConfig(*config); saveErr != nil {
+		log.Printf("Warning: could not cache credentials: %v", saveErr)
+	}
+	return nil
 }
 
 func credsFromConfig(config otf_api.CLIConfig) (string, string) {
@@ -343,7 +369,7 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 
 	client, err := s.ensureClient()
 	if err != nil {
-		s.writeError(id, -32001, fmt.Sprintf("Authentication required: %v", err))
+		s.writeError(id, errCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
 		return
 	}
 

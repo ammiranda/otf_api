@@ -19,7 +19,7 @@ func TestEnsureClient_ReturnsCachedClient(t *testing.T) {
 	}
 	c, err := s.ensureClient()
 	require.NoError(t, err)
-	assert.Equal(t, s.client, c)
+	assert.Same(t, s.client, c)
 }
 
 func TestEnsureClient_ReturnsErrorWhenNoCredentials(t *testing.T) {
@@ -77,6 +77,6 @@ func TestHandleToolCall_ReturnsErrorWhenNoAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, -32001, resp.Error.Code)
+	assert.Equal(t, errCodeAuthRequired, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "Authentication required")
 }

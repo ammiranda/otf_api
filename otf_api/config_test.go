@@ -264,7 +264,10 @@ func (s *ConfigSuite) TestSaveConfig_KeyringFails_FallsBackToFile() {
 	s.withKeyring()
 	cfg := CLIConfig{Token: "file-token"}
 	s.Require().NoError(SaveConfig(cfg))
-	s.assertFile(cfg)
+
+	loaded, err := LoadConfig()
+	s.Require().NoError(err)
+	s.Equal("file-token", loaded.Token)
 }
 
 func (s *ConfigSuite) TestLoadFromKeyring() {
