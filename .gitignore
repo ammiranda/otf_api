@@ -1,7 +1,6 @@
 .DS_Store
 bin/
-.vscode/settings.json
-.vscode/extensions.json
+.vscode/
 go.work.sum
 cmd/otf-cli/otf-cli
 cmd/otf-mcp/otf-mcp
