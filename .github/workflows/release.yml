@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+      - 'cli/*'
+      - 'mcp/*'
 
 permissions:
   contents: write
@@ -20,7 +22,27 @@ jobs:
         with:
           go-version: stable
 
+      - name: Determine module
+        id: module
+        run: |
+          tag="${{ github.ref_name }}"
+          case "$tag" in
+            cli/*)
+              echo "name=otf-cli" >> "$GITHUB_OUTPUT"
+              echo "version=${tag#cli/}" >> "$GITHUB_OUTPUT"
+              ;;
+            mcp/*)
+              echo "name=otf-mcp" >> "$GITHUB_OUTPUT"
+              echo "version=${tag#mcp/}" >> "$GITHUB_OUTPUT"
+              ;;
+            v*)
+              echo "name=all" >> "$GITHUB_OUTPUT"
+              echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
       - name: Release CLI
+        if: steps.module.outputs.name == 'otf-cli' || steps.module.outputs.name == 'all'
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
@@ -28,9 +50,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          GORELEASER_CURRENT_TAG: v${{ steps.module.outputs.version }}
 
       - name: Release MCP
+        if: steps.module.outputs.name == 'otf-mcp' || steps.module.outputs.name == 'all'
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
@@ -38,4 +61,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          GORELEASER_CURRENT_TAG: v${{ steps.module.outputs.version }}
