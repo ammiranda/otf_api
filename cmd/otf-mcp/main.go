@@ -78,6 +78,8 @@ type IPLocation struct {
 	Country string  `json:"country"`
 }
 
+// JSON-RPC 2.0 error codes: https://www.jsonrpc.org/specification#error_object
+// -32700..-32000 are reserved by the spec; -32000..-32099 are implementation-defined server errors.
 const (
 	errCodeParseError     = -32700
 	errCodeMethodNotFound = -32601
