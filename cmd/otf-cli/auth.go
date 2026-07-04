@@ -57,10 +57,9 @@ Examples:
 		config.RefreshToken = apiClient.RefreshToken
 
 		if err := saveConfig(config); err != nil {
-			log.Printf("Warning: could not cache credentials: %v", err)
-		} else {
-			log.Println("Credentials saved to system keychain.")
+			log.Fatalf("Failed to cache credentials: %v", err)
 		}
+		log.Println("Credentials saved successfully.")
 	},
 }
 

@@ -74,6 +74,9 @@ func (c *Client) SetAuthenticator(a Authenticator) {
 func (c *Client) setAuthResult(result *AuthResult) {
 	c.Token = result.Token
 	c.TokenExpiry = time.Now().Add(result.ExpiresIn)
+	if exp, err := parseTokenExpiry(result.Token); err == nil {
+		c.TokenExpiry = exp
+	}
 	if result.RefreshToken != "" {
 		c.RefreshToken = result.RefreshToken
 	}

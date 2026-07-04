@@ -18,15 +18,17 @@ const (
 )
 
 type CLIConfig struct {
-	PreferredStudioIDs    []string `json:"preferred_studio_ids,omitempty"`
-	Timezone              string   `json:"timezone,omitempty"`
-	Token                 string   `json:"token,omitempty"`
-	RefreshToken          string   `json:"refresh_token,omitempty"`
-	Username              string   `json:"username,omitempty"`
-	Password              string   `json:"password,omitempty"`
-	EncryptedToken        string   `json:"encrypted_token,omitempty"`
-	EncryptedRefreshToken string   `json:"encrypted_refresh_token,omitempty"`
-	AllowIPLocation       *bool    `json:"allow_ip_location,omitempty"`
+	PreferredStudioIDs     []string `json:"preferred_studio_ids,omitempty"`
+	Timezone               string   `json:"timezone,omitempty"`
+	Token                  string   `json:"token,omitempty"`
+	RefreshToken           string   `json:"refresh_token,omitempty"`
+	Username               string   `json:"username,omitempty"`
+	Password               string   `json:"password,omitempty"`
+	EncryptedToken         string   `json:"encrypted_token,omitempty"`
+	EncryptedRefreshToken  string   `json:"encrypted_refresh_token,omitempty"`
+	EncryptedUsername      string   `json:"encrypted_username,omitempty"`
+	EncryptedPassword      string   `json:"encrypted_password,omitempty"`
+	AllowIPLocation        *bool    `json:"allow_ip_location,omitempty"`
 }
 
 var GetConfigPath = func() (string, error) {
@@ -70,6 +72,16 @@ func loadFromFile() (CLIConfig, error) {
 				config.RefreshToken = dec
 			}
 		}
+		if config.EncryptedUsername != "" {
+			if dec, err := decrypt(config.EncryptedUsername, key); err == nil {
+				config.Username = dec
+			}
+		}
+		if config.EncryptedPassword != "" {
+			if dec, err := decrypt(config.EncryptedPassword, key); err == nil {
+				config.Password = dec
+			}
+		}
 	}
 
 	return config, nil
@@ -80,24 +92,34 @@ func saveToFile(config CLIConfig) error {
 	if err != nil {
 		return err
 	}
-	config.Username = ""
-	config.Password = ""
 
 	key, keyErr := deriveKey()
 	if keyErr == nil {
 		if config.Token != "" {
 			if enc, err := encrypt(config.Token, key); err == nil {
 				config.EncryptedToken = enc
-				config.Token = ""
 			}
 		}
 		if config.RefreshToken != "" {
 			if enc, err := encrypt(config.RefreshToken, key); err == nil {
 				config.EncryptedRefreshToken = enc
-				config.RefreshToken = ""
+			}
+		}
+		if config.Username != "" {
+			if enc, err := encrypt(config.Username, key); err == nil {
+				config.EncryptedUsername = enc
+			}
+		}
+		if config.Password != "" {
+			if enc, err := encrypt(config.Password, key); err == nil {
+				config.EncryptedPassword = enc
 			}
 		}
 	}
+	config.Token = ""
+	config.RefreshToken = ""
+	config.Username = ""
+	config.Password = ""
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -190,10 +212,14 @@ func loadFromKeyring() (CLIConfig, error) {
 }
 
 func SaveConfig(config CLIConfig) error {
-	if err := saveToKeyring(config); err == nil {
+	kcErr := saveToKeyring(config)
+	if kcErr == nil {
 		return nil
 	}
-	return saveToFile(config)
+	if err := saveToFile(config); err != nil {
+		return fmt.Errorf("keychain: %w; file: %w", kcErr, err)
+	}
+	return nil
 }
 
 func saveToKeyring(config CLIConfig) error {
