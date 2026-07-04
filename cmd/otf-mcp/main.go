@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -86,8 +86,7 @@ var (
 )
 
 func main() {
-	log.SetFlags(0)
-	log.SetOutput(os.Stderr)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Printf("otf-mcp v%s\n", version)
@@ -96,24 +95,24 @@ func main() {
 
 	config, cfgErr := loadConfig()
 	if cfgErr != nil {
-		log.Printf("Warning: could not load config: %v", cfgErr)
+		slog.Warn("could not load config", "error", cfgErr)
 	}
 
 	hasKeychainAuth := config.Token != "" || (config.Username != "" && config.Password != "")
 	hasEnvAuth := os.Getenv("OTF_USERNAME") != "" && os.Getenv("OTF_PASSWORD") != ""
 
 	if !hasKeychainAuth && !hasEnvAuth {
-		log.Println("WARNING: No credentials found. Run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars.")
-		log.Println("         Every tool call will fail with 'Authentication required' until you configure credentials.")
+		slog.Warn("no credentials found, run 'otf-cli auth' or set OTF_USERNAME/OTF_PASSWORD env vars; every tool call will fail until credentials are configured")
 	} else if config.Token != "" {
-		log.Println("Using cached session from keychain (authenticated).")
+		slog.Info("using cached session from keychain")
 	} else {
-		log.Println("Credentials available via env vars (will authenticate on first tool call).")
+		slog.Info("credentials available via env vars, will authenticate on first tool call")
 	}
 
 	server := &MCPServer{}
 	if err := server.Run(); err != nil {
-		log.Fatalf("server error: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -226,7 +225,7 @@ func (s *MCPServer) tryRefreshAuth(client *otf_api.Client, config *otf_api.CLICo
 	config.Token = client.Token
 	config.RefreshToken = client.RefreshToken
 	if saveErr := saveConfig(*config); saveErr != nil {
-		log.Printf("Warning: could not cache refreshed token: %v", saveErr)
+		slog.Warn("could not cache refreshed token", "error", saveErr)
 	}
 	return true
 }
@@ -250,7 +249,7 @@ func (s *MCPServer) authenticate(client *otf_api.Client, config *otf_api.CLIConf
 	config.Token = client.Token
 	config.RefreshToken = client.RefreshToken
 	if saveErr := saveConfig(*config); saveErr != nil {
-		log.Printf("Warning: could not cache credentials: %v", saveErr)
+		slog.Warn("could not cache credentials", "error", saveErr)
 	}
 	return nil
 }
