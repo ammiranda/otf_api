@@ -78,8 +78,6 @@ type IPLocation struct {
 	Country string  `json:"country"`
 }
 
-const errCodeAuthRequired = -32001
-
 var (
 	version  = "0.1.0"
 	ipAPIURL = "http://ip-api.com/json/"
@@ -368,7 +366,7 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 
 	client, err := s.ensureClient()
 	if err != nil {
-		s.writeError(id, errCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
+		s.writeError(id, otf_api.ErrCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
 		return
 	}
 

@@ -77,6 +77,6 @@ func TestHandleToolCall_ReturnsErrorWhenNoAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, errCodeAuthRequired, resp.Error.Code)
+	assert.Equal(t, otf_api.ErrCodeAuthRequired, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "Authentication required")
 }

@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// ErrCodeAuthRequired is the JSON-RPC error code used by MCP to signal
+// that authentication is needed before the request can be served.
+const ErrCodeAuthRequired = -32001
+
 // Authenticator handles authentication with the OTF API provider.
 // Implementations handle provider-specific protocols (Cognito, OAuth2, etc.).
 type Authenticator interface {
