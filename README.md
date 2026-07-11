@@ -8,6 +8,8 @@
 [![Install CLI](https://img.shields.io/badge/go%20install-otf--cli-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-cli)
 [![Install MCP](https://img.shields.io/badge/go%20install-otf--mcp-blue)](https://pkg.go.dev/github.com/ammiranda/otf_api/cmd/otf-mcp)
 
+> **⚠️ Unofficial project.** This is not affiliated with, endorsed by, or supported by OrangeTheory Fitness, LLC in any way. It reverse-engineers undocumented, private endpoints used by the official OTF app, which may violate OTF's Terms of Service. Endpoints can change or break without notice, and use is entirely at your own risk. Don't use this to abuse booking/waitlist systems or otherwise harm other members' access to classes.
+
 ## What is this?
 
 OrangeTheory Fitness doesn't provide an official API, but their app communicates with internal APIs. This project reverse-engineers those endpoints to give you programmatic access to:
@@ -286,7 +288,7 @@ The SDK handles:
 - **Token caching** — avoids re-login on every command
 - **Automatic token refresh** on 401 responses
 - **Gzip decoding** for API responses
-- **macOS Keychain** — tokens are stored in the system keychain when available, falling back to `~/.config/otf-cli/config.json`
+- **macOS Keychain** — tokens are stored in the system keychain when available, falling back to an AES-256-GCM encrypted `~/.config/otf-cli/config.json` with a randomly generated, locally stored key. This fallback is meant for environments without keychain access (SSH, Docker, CI) — it's not a substitute for OS-level credential storage, since anyone with read access to your config directory can read the key file too.
 
 ## Project Structure
 
