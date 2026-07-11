@@ -1,6 +1,7 @@
 package otf_api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"os"
@@ -437,27 +438,41 @@ func TestDecrypt_TamperedCiphertext(t *testing.T) {
 	}
 }
 
-func TestDeriveKey_Deterministic(t *testing.T) {
+func TestDeriveKey_PersistsAcrossCalls(t *testing.T) {
 	origPath := GetConfigPath
 	defer func() { GetConfigPath = origPath }()
 
-	path1 := "/tmp/otf-test-dir-a/config.json"
-	path2 := "/tmp/otf-test-dir-b/config.json"
+	path := filepath.Join(t.TempDir(), "config.json")
+	GetConfigPath = func() (string, error) { return path, nil }
+
+	k1, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(k1) != 32 {
+		t.Fatalf("expected 32-byte key, got %d", len(k1))
+	}
+
+	k2, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(k1) != string(k2) {
+		t.Fatal("deriveKey should return the same persisted key across calls")
+	}
+}
+
+func TestDeriveKey_RandomPerInstall(t *testing.T) {
+	origPath := GetConfigPath
+	defer func() { GetConfigPath = origPath }()
+
+	path1 := filepath.Join(t.TempDir(), "config.json")
+	path2 := filepath.Join(t.TempDir(), "config.json")
 
 	GetConfigPath = func() (string, error) { return path1, nil }
-	k1a, err := deriveKey()
+	k1, err := deriveKey()
 	if err != nil {
 		t.Fatal(err)
-	}
-	k1b, err := deriveKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(k1a) != 32 {
-		t.Fatalf("expected 32-byte key, got %d", len(k1a))
-	}
-	if string(k1a) != string(k1b) {
-		t.Fatal("deriveKey should be deterministic for the same path")
 	}
 
 	GetConfigPath = func() (string, error) { return path2, nil }
@@ -465,8 +480,33 @@ func TestDeriveKey_Deterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(k1a) == string(k2) {
-		t.Fatal("deriveKey should differ for different paths")
+
+	if string(k1) == string(k2) {
+		t.Fatal("deriveKey should generate an independent random key for each install")
+	}
+}
+
+func TestDeriveKey_KeyFileNotDerivableFromPathAlone(t *testing.T) {
+	origPath := GetConfigPath
+	defer func() { GetConfigPath = origPath }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	GetConfigPath = func() (string, error) { return path, nil }
+
+	key, err := deriveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := sha256.Sum256([]byte(dir + ":otf-file-key-v1"))
+	if string(key) == string(h[:]) {
+		t.Fatal("derived key must not match the legacy static-salt hash of the config path")
+	}
+
+	keyPath := filepath.Join(dir, keyFileName)
+	if _, statErr := os.Stat(keyPath); statErr != nil {
+		t.Fatalf("expected key file to be persisted at %s: %v", keyPath, statErr)
 	}
 }
 

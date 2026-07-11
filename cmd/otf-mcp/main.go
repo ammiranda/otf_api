@@ -283,7 +283,7 @@ func (s *MCPServer) handleToolsList(id any) {
 	tools := []ToolDefinition{
 		{
 			Name:        "get_schedules",
-			Description: "Fetch class schedules for OTF studios. Provide studio_ids as comma-separated UUIDs, or omit to use your preferred studios from configuration.",
+			Description: "Fetch class schedules for OTF studios. Provide studio_ids as comma-separated UUIDs, or omit to use your preferred studios from configuration. Display as: table with columns time, studio, class name, capacity.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -296,12 +296,12 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "list_bookings",
-			Description: "List your current and upcoming OTF bookings.",
+			Description: "List your current and upcoming OTF bookings. Display as: raw JSON.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 		},
 		{
 			Name:        "cancel_booking",
-			Description: "Cancel an OTF booking by its booking ID.",
+			Description: "Cancel an OTF booking by its booking ID. Display as: confirmation message.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -315,7 +315,7 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "book_class",
-			Description: "Book an OTF class by its class ID. Use waitlist=true if the class is full.",
+			Description: "Book an OTF class by its class ID. Use waitlist=true if the class is full. Display as: confirmation message.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -333,7 +333,7 @@ func (s *MCPServer) handleToolsList(id any) {
 		},
 		{
 			Name:        "search_studios",
-			Description: "Search for OTF studios near a location (optionally within a radius in miles, defaults to 10). Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in.",
+			Description: "Search for OTF studios near a location (optionally within a radius in miles, defaults to 10). Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in. Display as: formatted list with studio name, distance, address.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

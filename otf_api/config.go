@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,17 +17,17 @@ const (
 )
 
 type CLIConfig struct {
-	PreferredStudioIDs     []string `json:"preferred_studio_ids,omitempty"`
-	Timezone               string   `json:"timezone,omitempty"`
-	Token                  string   `json:"token,omitempty"`
-	RefreshToken           string   `json:"refresh_token,omitempty"`
-	Username               string   `json:"username,omitempty"`
-	Password               string   `json:"password,omitempty"`
-	EncryptedToken         string   `json:"encrypted_token,omitempty"`
-	EncryptedRefreshToken  string   `json:"encrypted_refresh_token,omitempty"`
-	EncryptedUsername      string   `json:"encrypted_username,omitempty"`
-	EncryptedPassword      string   `json:"encrypted_password,omitempty"`
-	AllowIPLocation        *bool    `json:"allow_ip_location,omitempty"`
+	PreferredStudioIDs    []string `json:"preferred_studio_ids,omitempty"`
+	Timezone              string   `json:"timezone,omitempty"`
+	Token                 string   `json:"token,omitempty"`
+	RefreshToken          string   `json:"refresh_token,omitempty"`
+	Username              string   `json:"username,omitempty"`
+	Password              string   `json:"password,omitempty"`
+	EncryptedToken        string   `json:"encrypted_token,omitempty"`
+	EncryptedRefreshToken string   `json:"encrypted_refresh_token,omitempty"`
+	EncryptedUsername     string   `json:"encrypted_username,omitempty"`
+	EncryptedPassword     string   `json:"encrypted_password,omitempty"`
+	AllowIPLocation       *bool    `json:"allow_ip_location,omitempty"`
 }
 
 var GetConfigPath = func() (string, error) {
@@ -128,14 +127,30 @@ func saveToFile(config CLIConfig) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+const keyFileName = ".encryption-key"
+
 var deriveKey = func() ([]byte, error) {
 	path, err := GetConfigPath()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Dir(path)
-	h := sha256.Sum256([]byte(dir + ":otf-file-key-v1"))
-	return h[:], nil
+	keyPath := filepath.Join(filepath.Dir(path), keyFileName)
+
+	if data, readErr := os.ReadFile(keyPath); readErr == nil {
+		if decoded, decErr := base64.StdEncoding.DecodeString(string(data)); decErr == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generating encryption key: %w", err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(key)
+	if err := os.WriteFile(keyPath, []byte(encoded), 0600); err != nil {
+		return nil, fmt.Errorf("writing encryption key: %w", err)
+	}
+	return key, nil
 }
 
 func encrypt(plaintext string, key []byte) (string, error) {
