@@ -24,10 +24,10 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any         `json:"id"`
-	Result  any         `json:"result,omitempty"`
-	Error   *RPCError   `json:"error,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id"`
+	Result  any       `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
 }
 
 type RPCError struct {
@@ -36,9 +36,9 @@ type RPCError struct {
 }
 
 type InitializeResult struct {
-	ProtocolVersion string          `json:"protocolVersion"`
+	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
-	ServerInfo      ServerInfo      `json:"serverInfo"`
+	ServerInfo      ServerInfo         `json:"serverInfo"`
 }
 
 type ServerCapabilities struct {
@@ -84,7 +84,6 @@ const (
 	errCodeParseError     = -32700
 	errCodeMethodNotFound = -32601
 	errCodeInvalidParams  = -32602
-	errCodeAuthRequired   = -32001
 )
 
 var (
@@ -124,8 +123,8 @@ func main() {
 }
 
 type MCPServer struct {
-	client  *otf_api.Client
-	ctx     context.Context
+	client *otf_api.Client
+	ctx    context.Context
 }
 
 func (s *MCPServer) Run() error {
@@ -268,6 +267,80 @@ func credsFromConfig(config otf_api.CLIConfig) (string, string) {
 	return "", ""
 }
 
+func (s *MCPServer) authenticateUser(args json.RawMessage) CallToolResult {
+	var params struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "Invalid parameters: expected username and password strings"}}}
+	}
+
+	if params.Username != "" && params.Password != "" {
+		return s.authenticateWithCredentials(params.Username, params.Password)
+	}
+
+	return s.tryExistingAuth()
+}
+
+func (s *MCPServer) authenticateWithCredentials(username, password string) CallToolResult {
+	client := otf_api.NewClient()
+	if err := client.Authenticate(s.ctx, username, password); err != nil {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Authentication failed: %v", err)}}}
+	}
+
+	config, cfgErr := loadConfig()
+	if cfgErr != nil {
+		config = otf_api.CLIConfig{}
+	}
+	config.Username = username
+	config.Password = password
+	config.Token = client.Token
+	config.RefreshToken = client.RefreshToken
+
+	if err := saveConfig(config); err != nil {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Authenticated but failed to save credentials: %v. Run 'otf-cli auth' to persist them.", err)}}}
+	}
+
+	s.client = nil
+	return CallToolResult{Content: []ToolContent{{Type: "text", Text: "Authenticated successfully. Credentials saved."}}}
+}
+
+func (s *MCPServer) tryExistingAuth() CallToolResult {
+	client := otf_api.NewClient()
+	config, cfgErr := loadConfig()
+	if cfgErr != nil {
+		return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "No credentials provided and no saved config found. Run 'otf-cli auth' in your terminal to authenticate."}}}
+	}
+
+	s.restoreSession(client, config, nil)
+	if !client.NeedAuth() {
+		s.client = client
+		return CallToolResult{Content: []ToolContent{{Type: "text", Text: "Already authenticated using cached session."}}}
+	}
+
+	if s.tryRefreshAuth(client, &config) {
+		s.client = client
+		return CallToolResult{Content: []ToolContent{{Type: "text", Text: "Authenticated successfully using refresh token."}}}
+	}
+
+	username, password := credsFromConfig(config)
+	if username != "" && password != "" {
+		if err := client.Authenticate(s.ctx, username, password); err != nil {
+			return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Saved credentials are invalid: %v. Run 'otf-cli auth' to re-authenticate.", err)}}}
+		}
+		config.Token = client.Token
+		config.RefreshToken = client.RefreshToken
+		if err := saveConfig(config); err != nil {
+			slog.Warn("could not cache credentials", "error", err)
+		}
+		s.client = client
+		return CallToolResult{Content: []ToolContent{{Type: "text", Text: "Authenticated successfully using saved credentials."}}}
+	}
+
+	return CallToolResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "No valid session found. Run 'otf-cli auth' in your terminal to authenticate."}}}
+}
+
 var promptCredentials = func() (string, string, error) {
 	var username, password string
 	if err := survey.AskOne(&survey.Input{Message: "OTF Username:"}, &username, survey.WithValidator(survey.Required)); err != nil {
@@ -332,6 +405,23 @@ func (s *MCPServer) handleToolsList(id any) {
 			}`),
 		},
 		{
+			Name:        "authenticate",
+			Description: "Check or establish authentication. With username/password: authenticates and saves credentials. Without parameters: tries cached session, refresh token, or saved credentials. If nothing works, tells you to run 'otf-cli auth' in your terminal.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"username": {
+						"type": "string",
+						"description": "Your OTF account email (optional if already authenticated)"
+					},
+					"password": {
+						"type": "string",
+						"description": "Your OTF account password (optional if already authenticated)"
+					}
+				}
+			}`),
+		},
+		{
 			Name:        "search_studios",
 			Description: "Search for OTF studios near a location (optionally within a radius in miles, defaults to 10). Returns studio names, UUIDs, and distances. Can detect your approximate location from your IP if lat/long are omitted, which sends your IP to a third-party geolocation service (ip-api.com). You must set allow_ip_location=true to opt in. Display as: formatted list with studio name, distance, address.",
 			InputSchema: json.RawMessage(`{
@@ -373,9 +463,18 @@ func (s *MCPServer) handleToolCall(id any, params json.RawMessage) {
 		return
 	}
 
+	if call.Name == "authenticate" {
+		result := s.authenticateUser(call.Arguments)
+		s.writeResult(id, result)
+		return
+	}
+
 	client, err := s.ensureClient()
 	if err != nil {
-		s.writeError(id, errCodeAuthRequired, fmt.Sprintf("Authentication required: %v", err))
+		s.writeResult(id, CallToolResult{
+			IsError: true,
+			Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Authentication required: %v", err)}},
+		})
 		return
 	}
 
