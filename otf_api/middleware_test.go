@@ -91,8 +91,9 @@ func (s *MiddlewareSuite) TestRetriesOn401WithRefresh() {
 	})
 
 	c := &Client{
+		Token:        "stale-token",
 		RefreshToken: "valid-refresh",
-		TokenExpiry:  time.Now().Add(-1 * time.Hour),
+		TokenExpiry:  time.Now().Add(1 * time.Hour),
 		HTTPClient:   &http.Client{},
 	}
 	c.authenticator = &mockAuthenticator{
@@ -110,6 +111,83 @@ func (s *MiddlewareSuite) TestRetriesOn401WithRefresh() {
 	s.Equal(2, requestCount)
 	s.Equal(http.StatusOK, res.StatusCode)
 	s.Equal("refreshed-token", c.Token)
+}
+
+func (s *MiddlewareSuite) TestRefreshesBeforeRequestWhenTokenExpired() {
+	requestCount := 0
+	var capturedToken string
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		capturedToken = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := &Client{
+		RefreshToken: "valid-refresh",
+		TokenExpiry:  time.Now().Add(-1 * time.Hour),
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+			s.Equal("valid-refresh", token)
+			c.Token = "refreshed-token"
+			c.TokenExpiry = time.Now().Add(1 * time.Hour)
+			return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
+		},
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	res, err := c.HTTPClient.Do(req)
+	s.NoError(err)
+	s.Equal(1, requestCount)
+	s.Equal(http.StatusOK, res.StatusCode)
+	s.Equal("Bearer refreshed-token", capturedToken)
+}
+
+func (s *MiddlewareSuite) TestDoesNotRefreshWhenTokenValid() {
+	requestCount := 0
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := s.clientWithToken("valid-token")
+	c.TokenExpiry = time.Now().Add(1 * time.Hour)
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+			s.T().Fatal("should not refresh when token is valid")
+			return nil, nil
+		},
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	res, err := c.HTTPClient.Do(req)
+	s.NoError(err)
+	s.Equal(1, requestCount)
+	s.Equal(http.StatusOK, res.StatusCode)
+}
+
+func (s *MiddlewareSuite) TestRefreshErrorBeforeRequest() {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		s.T().Fatal("request should not be sent when refresh fails")
+	})
+
+	c := &Client{
+		RefreshToken: "bad-refresh",
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+			return nil, http.ErrAbortHandler
+		},
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	_, err := c.HTTPClient.Do(req)
+	s.Error(err)
 }
 
 func (s *MiddlewareSuite) TestDoesNotRetryOn401WithoutRefreshToken() {
