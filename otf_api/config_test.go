@@ -49,7 +49,8 @@ func (s *ConfigSuite) withKeyring() {
 }
 
 func (s *ConfigSuite) withKeyringData(cfg CLIConfig) {
-	data, _ := json.Marshal(cfg)
+	data, err := json.Marshal(cfg)
+	s.Require().NoError(err)
 	KeyringGet = func(_, _ string) (string, error) {
 		return string(data), nil
 	}

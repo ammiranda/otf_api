@@ -52,8 +52,9 @@ func (s *MiddlewareSuite) TestSetsHeaders() {
 	})
 
 	c := s.clientWithToken("test-token")
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
-	_, err := c.HTTPClient.Do(req)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	_, err = c.HTTPClient.Do(req)
 	s.NoError(err)
 }
 
@@ -66,14 +67,16 @@ func (s *MiddlewareSuite) TestReadsTokenDynamically() {
 
 	c := s.clientWithToken("initial-token")
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
-	_, err := c.HTTPClient.Do(req)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	_, err = c.HTTPClient.Do(req)
 	s.NoError(err)
 	s.Equal("Bearer initial-token", capturedToken)
 
 	c.Token = "updated-token"
 
-	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
 	_, err = c.HTTPClient.Do(req2)
 	s.NoError(err)
 	s.Equal("Bearer updated-token", capturedToken)
@@ -105,7 +108,8 @@ func (s *MiddlewareSuite) TestRetriesOn401WithRefresh() {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
 	res, err := c.HTTPClient.Do(req)
 	s.NoError(err)
 	s.Equal(2, requestCount)
@@ -137,7 +141,8 @@ func (s *MiddlewareSuite) TestRefreshesBeforeRequestWhenTokenExpired() {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
 	res, err := c.HTTPClient.Do(req)
 	s.NoError(err)
 	s.Equal(1, requestCount)
@@ -162,7 +167,8 @@ func (s *MiddlewareSuite) TestDoesNotRefreshWhenTokenValid() {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
 	res, err := c.HTTPClient.Do(req)
 	s.NoError(err)
 	s.Equal(1, requestCount)
@@ -185,8 +191,9 @@ func (s *MiddlewareSuite) TestRefreshErrorBeforeRequest() {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
-	_, err := c.HTTPClient.Do(req)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	_, err = c.HTTPClient.Do(req)
 	s.Error(err)
 }
 
@@ -199,7 +206,8 @@ func (s *MiddlewareSuite) TestDoesNotRetryOn401WithoutRefreshToken() {
 
 	c := s.clientWithToken("expired-token")
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
 	res, err := c.HTTPClient.Do(req)
 	s.NoError(err)
 	s.Equal(1, requestCount)
@@ -222,8 +230,9 @@ func (s *MiddlewareSuite) TestFailedRefreshStillReturnsError() {
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
-	_, err := c.HTTPClient.Do(req)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	_, err = c.HTTPClient.Do(req)
 	s.Error(err)
 }
 
@@ -237,8 +246,9 @@ func TestAddHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
-	_, err := c.Do(req)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	_, err = c.Do(req)
 	require.NoError(t, err)
 }
 
