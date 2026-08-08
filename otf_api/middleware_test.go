@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,6 +197,59 @@ func (s *MiddlewareSuite) TestRefreshErrorBeforeRequest() {
 	s.Require().NoError(err)
 	_, err = c.HTTPClient.Do(req)
 	s.Error(err)
+}
+
+func (s *MiddlewareSuite) TestConcurrentRequestsShareRefresh() {
+	var refreshCalls int32
+	var requestCount int32
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := &Client{
+		RefreshToken: "valid-refresh",
+		TokenExpiry:  time.Now().Add(-1 * time.Hour),
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+			atomic.AddInt32(&refreshCalls, 1)
+			time.Sleep(50 * time.Millisecond)
+			return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
+		},
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	const workers = 8
+	start := make(chan struct{})
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			res, err := c.HTTPClient.Do(req)
+			if err == nil {
+				err = res.Body.Close()
+			}
+			errs[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	s.Equal(int32(1), atomic.LoadInt32(&refreshCalls))
+	s.Equal(int32(workers), atomic.LoadInt32(&requestCount))
+	for i, err := range errs {
+		s.NoError(err, "worker %d", i)
+	}
 }
 
 func (s *MiddlewareSuite) TestDoesNotRetryOn401WithoutRefreshToken() {

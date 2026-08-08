@@ -52,13 +52,13 @@ func AddHeader(key string, value string) Middleware {
 func AuthMiddleware(c *Client) Middleware {
 	return func(rt http.RoundTripper) http.RoundTripper {
 		return internalRoundTripper(func(req *http.Request) (*http.Response, error) {
-			if c.NeedAuth() && c.RefreshToken != "" {
+			if c.NeedAuth() && c.HasRefreshToken() {
 				if refreshErr := c.RefreshAuth(req.Context()); refreshErr != nil {
 					return nil, fmt.Errorf("token refresh failed: %w", refreshErr)
 				}
 			}
 
-			req.Header.Set("Authorization", "Bearer "+c.Token)
+			req.Header.Set("Authorization", "Bearer "+c.TokenValue())
 			req.Header.Set("Content-Type", "application/json")
 
 			res, err := rt.RoundTrip(req)
@@ -66,7 +66,7 @@ func AuthMiddleware(c *Client) Middleware {
 				return res, err
 			}
 
-			if res.StatusCode == http.StatusUnauthorized && c.RefreshToken != "" {
+			if res.StatusCode == http.StatusUnauthorized && c.HasRefreshToken() {
 				if req.Body == nil || req.GetBody != nil {
 					if err := res.Body.Close(); err != nil {
 						log.Printf("error closing response body: %v", err)
@@ -77,7 +77,7 @@ func AuthMiddleware(c *Client) Middleware {
 					}
 
 					newReq := req.Clone(req.Context())
-					newReq.Header.Set("Authorization", "Bearer "+c.Token)
+					newReq.Header.Set("Authorization", "Bearer "+c.TokenValue())
 					newReq.Header.Set("Content-Type", "application/json")
 
 					return rt.RoundTrip(newReq)
