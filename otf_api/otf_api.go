@@ -3,6 +3,7 @@ package otf_api
 import (
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,8 @@ type Client struct {
 	MemberID     string
 
 	authenticator Authenticator
+	mu            sync.Mutex
+	refreshing    *refreshCall
 }
 
 func NewClient() *Client {

@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# Pre-commit hook: format staged Go files, check whitespace, run linters.
+
+if git rev-parse --verify HEAD >/dev/null 2>&1
+then
+	against=HEAD
+else
+	against=$(git hash-object -t tree /dev/null)
+fi
+
+allownonascii=$(git config --type=bool hooks.allownonascii)
+
+exec 1>&2
+
+if [ "$allownonascii" != "true" ] &&
+	test $(git diff-index --cached --name-only --diff-filter=A -z $against |
+	  LC_ALL=C tr -d '[ -~]\0' | wc -c) != 0
+then
+	cat <<\EOF
+Error: Attempt to add a non-ASCII file name.
+EOF
+	exit 1
+fi
+
+gofiles=$(git diff --cached --name-only --diff-filter=ACM | grep '.go$')
+if [ -n "$gofiles" ]; then
+	for fn in $gofiles; do
+		gofmt -w "$fn"
+		git add "$fn"
+	done
+fi
+
+git diff-index --check --cached $against -- || exit 1
+
+if [ -n "$gofiles" ]; then
+	if command -v golangci-lint >/dev/null 2>&1; then
+		echo "Running golangci-lint..."
+		golangci-lint run || exit 1
+	else
+		echo "golangci-lint not found; skipping lint" >&2
+	fi
+fi

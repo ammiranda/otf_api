@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -126,11 +128,11 @@ func TestAuthenticate(t *testing.T) {
 
 func TestRefreshAuth(t *testing.T) {
 	tests := []struct {
-		name       string
-		client     *Client
-		wantTok    string
-		wantRef    string
-		err        bool
+		name    string
+		client  *Client
+		wantTok string
+		wantRef string
+		err     bool
 	}{
 		{
 			"success",
@@ -209,6 +211,42 @@ func TestRefreshAuth(t *testing.T) {
 			assert.Equal(t, tt.wantRef, tt.client.RefreshToken)
 		})
 	}
+}
+
+func TestRefreshAuthConcurrent(t *testing.T) {
+	var refreshCalls int32
+	c := &Client{
+		RefreshToken: "valid-refresh",
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+			atomic.AddInt32(&refreshCalls, 1)
+			time.Sleep(50 * time.Millisecond)
+			return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
+		},
+	}
+
+	const workers = 10
+	start := make(chan struct{})
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = c.RefreshAuth(context.Background())
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, int32(1), atomic.LoadInt32(&refreshCalls))
+	for i, err := range errs {
+		require.NoError(t, err, "worker %d", i)
+	}
+	assert.Equal(t, "refreshed-token", c.Token)
 }
 
 func TestSetToken(t *testing.T) {
