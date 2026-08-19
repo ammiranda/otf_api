@@ -24,10 +24,10 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any         `json:"id"`
-	Result  any         `json:"result,omitempty"`
-	Error   *RPCError   `json:"error,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id"`
+	Result  any       `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
 }
 
 type RPCError struct {
@@ -36,9 +36,9 @@ type RPCError struct {
 }
 
 type InitializeResult struct {
-	ProtocolVersion string          `json:"protocolVersion"`
+	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
-	ServerInfo      ServerInfo      `json:"serverInfo"`
+	ServerInfo      ServerInfo         `json:"serverInfo"`
 }
 
 type ServerCapabilities struct {
@@ -88,7 +88,7 @@ const (
 )
 
 var (
-	version  = "0.4.0"
+	version  string
 	ipAPIURL = "http://ip-api.com/json/"
 )
 
@@ -124,8 +124,8 @@ func main() {
 }
 
 type MCPServer struct {
-	client  *otf_api.Client
-	ctx     context.Context
+	client *otf_api.Client
+	ctx    context.Context
 }
 
 func (s *MCPServer) Run() error {
@@ -190,6 +190,10 @@ func (s *MCPServer) ensureClient() (*otf_api.Client, error) {
 	}
 
 	client := otf_api.NewClient()
+	client.FallbackAuth = func(ctx context.Context) error {
+		return s.reauthWithStoredCredentials(ctx, client)
+	}
+
 	config, cfgErr := loadConfig()
 
 	s.restoreSession(client, config, cfgErr)
@@ -235,6 +239,40 @@ func (s *MCPServer) tryRefreshAuth(client *otf_api.Client, config *otf_api.CLICo
 		slog.Warn("could not cache refreshed token", "error", saveErr)
 	}
 	return true
+}
+
+// reauthWithStoredCredentials authenticates using credentials from the
+// config or OTF_USERNAME/OTF_PASSWORD env vars. It is used as the
+// client's FallbackAuth when token refresh fails mid-session.
+func (s *MCPServer) reauthWithStoredCredentials(ctx context.Context, client *otf_api.Client) error {
+	config, cfgErr := loadConfig()
+
+	username, password := "", ""
+	if cfgErr == nil {
+		username, password = credsFromConfig(config)
+	}
+	if username == "" || password == "" {
+		username = os.Getenv("OTF_USERNAME")
+		password = os.Getenv("OTF_PASSWORD")
+	}
+	if username == "" || password == "" {
+		return fmt.Errorf("no stored credentials available for re-authentication")
+	}
+
+	if err := client.Authenticate(ctx, username, password); err != nil {
+		return fmt.Errorf("re-authentication failed: %w", err)
+	}
+
+	if cfgErr == nil {
+		config.Username = username
+		config.Password = password
+		config.Token = client.Token
+		config.RefreshToken = client.RefreshToken
+		if saveErr := saveConfig(config); saveErr != nil {
+			slog.Warn("could not cache re-authenticated session", "error", saveErr)
+		}
+	}
+	return nil
 }
 
 func (s *MCPServer) authenticate(client *otf_api.Client, config *otf_api.CLIConfig) error {

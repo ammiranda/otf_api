@@ -104,6 +104,31 @@ func (c *Client) endRefresh(call *refreshCall, result *AuthResult, err error) {
 	close(call.done)
 }
 
+// refreshAuthOrFallback refreshes the token, falling back to
+// re-authentication via FallbackAuth when the refresh token is
+// unavailable or the refresh fails. Concurrent fallback calls are
+// serialized; callers that arrive after a successful fallback simply
+// wait for it to finish.
+func (c *Client) refreshAuthOrFallback(ctx context.Context) error {
+	refreshErr := c.RefreshAuth(ctx)
+	if refreshErr == nil {
+		return nil
+	}
+	if c.FallbackAuth == nil {
+		return refreshErr
+	}
+
+	c.reauthMu.Lock()
+	defer c.reauthMu.Unlock()
+	if !c.NeedAuth() {
+		return nil
+	}
+	if ferr := c.FallbackAuth(ctx); ferr != nil {
+		return fmt.Errorf("token refresh failed: %w; fallback re-authentication failed: %v", refreshErr, ferr)
+	}
+	return nil
+}
+
 // SetAuthenticator replaces the authenticator used by the client.
 func (c *Client) SetAuthenticator(a Authenticator) {
 	c.authenticator = a
