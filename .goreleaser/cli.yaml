@@ -31,7 +31,7 @@ checksum:
   name_template: 'checksums-cli.txt'
 
 changelog:
-  skip: true
+  disable: true
 
 release:
   github:
