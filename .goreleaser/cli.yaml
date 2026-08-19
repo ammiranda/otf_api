@@ -1,5 +1,7 @@
 version: 2
 
+project_name: otf-cli
+
 builds:
   - id: otf-cli
     main: ./cmd/otf-cli
@@ -19,10 +21,6 @@ archives:
   - id: default
     formats:
       - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -30,20 +28,15 @@ archives:
       {{- .Arch }}
 
 checksum:
-  name_template: 'checksums.txt'
+  name_template: 'checksums-cli.txt'
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - '^docs:'
-      - '^test:'
-      - '^ci:'
-      - '^chore:'
+  skip: true
 
 release:
   github:
     owner: ammiranda
     name: otf_api
+  mode: append
   draft: false
   prerelease: auto
