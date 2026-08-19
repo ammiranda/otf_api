@@ -1,43 +1,49 @@
 version: 2
 
-project_name: otf-mcp
-
 builds:
   - id: otf-mcp
-    main: ./cmd/otf-mcp/
+    main: ./cmd/otf-mcp
     binary: otf-mcp
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    env: [CGO_ENABLED=0]
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
 
 archives:
-  - id: otf-mcp
-    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
-    formats: [tar.gz]
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
 
 checksum:
-  name_template: "otf-mcp-sha256sums.txt"
-  algorithm: sha256
+  name_template: 'checksums.txt'
 
-homebrew_casks:
-  - name: otf-mcp
-    repository:
-      owner: ammiranda
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
-    commit_author:
-      name: goreleaser
-      email: goreleaser@localhost
-    binaries:
-      - otf-mcp
-    homepage: "https://github.com/ammiranda/otf_api"
-    description: "MCP server for the OrangeTheory Fitness API — AI-ready class booking"
-    license: "MIT"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
 
 release:
   github:
     owner: ammiranda
     name: otf_api
-  header: "{{ .ProjectName }} v{{ .Version }}"
+  draft: false
   prerelease: auto

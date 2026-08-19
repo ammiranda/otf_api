@@ -45,16 +45,17 @@ func AddHeader(key string, value string) Middleware {
 // AuthMiddleware returns a Middleware that sets the Authorization and
 // Content-Type headers dynamically from the Client's current token. If
 // the token is empty or expired (see Client.NeedAuth), it refreshes
-// the token before the request is sent. If a request still receives a
-// 401 response and the Client has a refresh token, it will attempt to
-// refresh the token and retry the request once (only for requests where
-// the body can be re-read).
+// the token before the request is sent, falling back to
+// Client.FallbackAuth when the refresh token is unavailable or the
+// refresh fails. If a request still receives a 401 response, it will
+// attempt to refresh the token (with the same fallback) and retry the
+// request once (only for requests where the body can be re-read).
 func AuthMiddleware(c *Client) Middleware {
 	return func(rt http.RoundTripper) http.RoundTripper {
 		return internalRoundTripper(func(req *http.Request) (*http.Response, error) {
-			if c.NeedAuth() && c.HasRefreshToken() {
-				if refreshErr := c.RefreshAuth(req.Context()); refreshErr != nil {
-					return nil, fmt.Errorf("token refresh failed: %w", refreshErr)
+			if c.NeedAuth() && (c.HasRefreshToken() || c.FallbackAuth != nil) {
+				if authErr := c.refreshAuthOrFallback(req.Context()); authErr != nil {
+					return nil, fmt.Errorf("auth refresh failed: %w", authErr)
 				}
 			}
 
@@ -66,14 +67,14 @@ func AuthMiddleware(c *Client) Middleware {
 				return res, err
 			}
 
-			if res.StatusCode == http.StatusUnauthorized && c.HasRefreshToken() {
+			if res.StatusCode == http.StatusUnauthorized && (c.HasRefreshToken() || c.FallbackAuth != nil) {
 				if req.Body == nil || req.GetBody != nil {
 					if err := res.Body.Close(); err != nil {
 						log.Printf("error closing response body: %v", err)
 					}
 
-					if refreshErr := c.RefreshAuth(req.Context()); refreshErr != nil {
-						return nil, fmt.Errorf("token refresh failed: %w", refreshErr)
+					if authErr := c.refreshAuthOrFallback(req.Context()); authErr != nil {
+						return nil, fmt.Errorf("auth refresh failed: %w", authErr)
 					}
 
 					newReq := req.Clone(req.Context())

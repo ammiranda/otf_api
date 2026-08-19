@@ -2,6 +2,7 @@ package otf_api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -190,6 +191,97 @@ func (s *MiddlewareSuite) TestRefreshErrorBeforeRequest() {
 		refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
 			return nil, http.ErrAbortHandler
 		},
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	_, err = c.HTTPClient.Do(req)
+	s.Error(err)
+}
+
+func (s *MiddlewareSuite) TestFallsBackToReauthWhenRefreshFails() {
+	var capturedToken string
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		capturedToken = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := &Client{
+		RefreshToken: "expired-refresh",
+		TokenExpiry:  time.Now().Add(-1 * time.Hour),
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		authenticateFunc: func(ctx context.Context, credentials map[string]string) (*AuthResult, error) {
+			return &AuthResult{Token: "reauth-token", RefreshToken: "new-refresh", ExpiresIn: 3600 * time.Second}, nil
+		},
+		refreshAuthFunc: func(ctx context.Context, refreshToken string) (*AuthResult, error) {
+			return nil, http.ErrAbortHandler
+		},
+	}
+	c.FallbackAuth = func(ctx context.Context) error {
+		return c.Authenticate(ctx, "user", "pass")
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	res, err := c.HTTPClient.Do(req)
+	s.NoError(err)
+	s.Equal(http.StatusOK, res.StatusCode)
+	s.Equal("Bearer reauth-token", capturedToken)
+	s.Equal("reauth-token", c.Token)
+	s.Equal("new-refresh", c.RefreshToken)
+}
+
+func (s *MiddlewareSuite) TestFallsBackToReauthWithoutRefreshToken() {
+	var capturedToken string
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		capturedToken = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := &Client{
+		Token:       "expired-token",
+		TokenExpiry: time.Now().Add(-1 * time.Hour),
+		HTTPClient:  &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		authenticateFunc: func(ctx context.Context, credentials map[string]string) (*AuthResult, error) {
+			return &AuthResult{Token: "reauth-token", RefreshToken: "new-refresh", ExpiresIn: 3600 * time.Second}, nil
+		},
+	}
+	c.FallbackAuth = func(ctx context.Context) error {
+		return c.Authenticate(ctx, "user", "pass")
+	}
+	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.server.URL, nil)
+	s.Require().NoError(err)
+	res, err := c.HTTPClient.Do(req)
+	s.NoError(err)
+	s.Equal(http.StatusOK, res.StatusCode)
+	s.Equal("Bearer reauth-token", capturedToken)
+}
+
+func (s *MiddlewareSuite) TestFallbackReauthFailureReturnsError() {
+	s.newServer(func(w http.ResponseWriter, r *http.Request) {
+		s.T().Fatal("request should not be sent when re-auth fails")
+	})
+
+	c := &Client{
+		RefreshToken: "expired-refresh",
+		TokenExpiry:  time.Now().Add(-1 * time.Hour),
+		HTTPClient:   &http.Client{},
+	}
+	c.authenticator = &mockAuthenticator{
+		refreshAuthFunc: func(ctx context.Context, refreshToken string) (*AuthResult, error) {
+			return nil, http.ErrAbortHandler
+		},
+	}
+	c.FallbackAuth = func(ctx context.Context) error {
+		return fmt.Errorf("no stored credentials")
 	}
 	c.HTTPClient.Transport = Chain(nil, AuthMiddleware(c))
 

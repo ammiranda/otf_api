@@ -1,6 +1,7 @@
 package otf_api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"sync"
@@ -22,8 +23,14 @@ type Client struct {
 	HTTPClient   *http.Client
 	MemberID     string
 
+	// FallbackAuth is called when token refresh fails, allowing the
+	// client to re-authenticate with stored credentials. Implementations
+	// should call Client.Authenticate and return its error.
+	FallbackAuth func(ctx context.Context) error
+
 	authenticator Authenticator
 	mu            sync.Mutex
+	reauthMu      sync.Mutex
 	refreshing    *refreshCall
 }
 
