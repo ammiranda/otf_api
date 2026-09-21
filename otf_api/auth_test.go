@@ -346,3 +346,174 @@ func TestSetAuthenticator(t *testing.T) {
 	c.SetAuthenticator(mock)
 	assert.Equal(t, mock, c.authenticator)
 }
+
+func TestRefreshAuthOrFallback(t *testing.T) {
+	tests := []struct {
+		name        string
+		client      *Client
+		wantErr     bool
+		wantErrMsg  string
+		wantToken   string
+		wantRefresh string
+	}{
+		{
+			name: "refresh succeeds",
+			client: &Client{
+				RefreshToken: "valid-refresh",
+				HTTPClient:   &http.Client{},
+				authenticator: &mockAuthenticator{
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
+					},
+				},
+			},
+			wantToken: "refreshed-token",
+		},
+		{
+			name: "refresh fails with no fallback",
+			client: &Client{
+				RefreshToken: "bad-refresh",
+				HTTPClient:   &http.Client{},
+				authenticator: &mockAuthenticator{
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						return nil, errors.New("refresh failed")
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "refresh failed",
+		},
+		{
+			name: "refresh fails and fallback succeeds",
+			client: &Client{
+				RefreshToken: "bad-refresh",
+				HTTPClient:   &http.Client{},
+				authenticator: &mockAuthenticator{
+					authenticateFunc: func(ctx context.Context, credentials map[string]string) (*AuthResult, error) {
+						return &AuthResult{Token: "fallback-token", RefreshToken: "fallback-refresh", ExpiresIn: 3600 * time.Second}, nil
+					},
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						return nil, errors.New("refresh failed")
+					},
+				},
+				FallbackAuth: func(ctx context.Context) error {
+					return nil
+				},
+			},
+			wantToken:   "",
+			wantRefresh: "bad-refresh",
+		},
+		{
+			name: "refresh fails and fallback also fails",
+			client: &Client{
+				RefreshToken: "bad-refresh",
+				HTTPClient:   &http.Client{},
+				authenticator: &mockAuthenticator{
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						return nil, errors.New("refresh failed")
+					},
+				},
+				FallbackAuth: func(ctx context.Context) error {
+					return errors.New("fallback failed")
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "fallback re-authentication failed",
+		},
+		{
+			name: "no refresh token and fallback succeeds",
+			client: &Client{
+				HTTPClient: &http.Client{},
+				authenticator: &mockAuthenticator{
+					authenticateFunc: func(ctx context.Context, credentials map[string]string) (*AuthResult, error) {
+						return &AuthResult{Token: "new-token", ExpiresIn: 3600 * time.Second}, nil
+					},
+				},
+				FallbackAuth: func(ctx context.Context) error {
+					return nil
+				},
+			},
+			wantToken: "",
+		},
+		{
+			name: "no refresh token and no fallback",
+			client: &Client{
+				HTTPClient: &http.Client{},
+				authenticator: &mockAuthenticator{
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						t.Error("should not be called")
+						return nil, nil
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "no refresh token available",
+		},
+		{
+			name: "refresh succeeds with existing token",
+			client: &Client{
+				Token:        "valid-token",
+				RefreshToken: "valid-refresh",
+				TokenExpiry:  time.Now().Add(1 * time.Hour),
+				HTTPClient:   &http.Client{},
+				authenticator: &mockAuthenticator{
+					refreshAuthFunc: func(ctx context.Context, token string) (*AuthResult, error) {
+						return &AuthResult{Token: "refreshed-token", ExpiresIn: 3600 * time.Second}, nil
+					},
+				},
+			},
+			wantToken: "refreshed-token",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.client.refreshAuthOrFallback(context.Background())
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrMsg)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantToken != "" {
+				assert.Equal(t, tt.wantToken, tt.client.Token)
+			}
+			if tt.wantRefresh != "" {
+				assert.Equal(t, tt.wantRefresh, tt.client.RefreshToken)
+			}
+		})
+	}
+}
+
+func TestTokenValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"set", "my-token", "my-token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{Token: tt.token}
+			assert.Equal(t, tt.want, c.TokenValue())
+		})
+	}
+}
+
+func TestHasRefreshToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{"empty", "", false},
+		{"set", "my-refresh", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{RefreshToken: tt.token}
+			assert.Equal(t, tt.want, c.HasRefreshToken())
+		})
+	}
+}
